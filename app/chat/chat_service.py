@@ -59,7 +59,7 @@ class ChatService:
         answer = None
         if self.llm.is_available:
             try:
-                answer = self.llm.generate(GENERAL_PROMPT.format(message=message), max_tokens=256)
+                answer = self.llm.generate(GENERAL_PROMPT.format(message=message), max_tokens=160)
             except Exception:
                 answer = None
         if not answer:

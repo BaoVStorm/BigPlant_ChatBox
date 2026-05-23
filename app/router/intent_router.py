@@ -208,7 +208,7 @@ def extract_entities(text: str, original: str) -> dict[str, Any]:
         entities["placement"] = "bedroom"
     elif "phong khach" in text:
         entities["placement"] = "living_room"
-    if contains_any(text, ["meo", "cho", "thu cung"]):
+    if mentions_pet(original, text):
         entities["pet_safe"] = True
     return entities
 
@@ -229,9 +229,22 @@ def extract_product_name(original: str) -> str | None:
 
 def is_invalid_product_candidate(candidate: str) -> bool:
     normalized = normalize_text(candidate)
-    bad_tokens = {"nay", "nao", "gi", "bi", "vao", "them", "mua", "dat", "tai sao"}
+    bad_tokens = {"nay", "nao", "gi", "bi", "vao", "them", "mua", "dat", "tai sao", "bigplant"}
     words = set(normalized.split())
     return bool(words & bad_tokens)
+
+
+def mentions_pet(original: str, normalized: str) -> bool:
+    original_lower = original.lower()
+    if "mèo" in original_lower or "thú cưng" in original_lower or "thu cung" in normalized:
+        return True
+    pet_dog_patterns = [
+        r"\bchó\b",
+        r"doc voi cho\b",
+        r"an toan voi cho\b",
+        r"nuoi cho\b",
+    ]
+    return any(re.search(pattern, original_lower) or re.search(pattern, normalized) for pattern in pet_dog_patterns)
 
 
 def extract_max_price(text: str) -> int | None:

@@ -43,10 +43,10 @@ class LocalLLM:
     def generate(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         model = self._load()
         output = model(
-            prompt,
+            format_qwen_prompt(prompt),
             max_tokens=max_tokens or self.settings.llm_max_tokens,
             temperature=self.settings.llm_temperature if temperature is None else temperature,
-            stop=["</s>", "<|im_end|>"],
+            stop=["</s>", "<|im_end|>", "<|im_start|>", "\nUser:", "\nNgười dùng:", "\nAssistant:"],
         )
         return str(output["choices"][0]["text"]).strip()
 
@@ -68,3 +68,15 @@ def parse_json_object(text: str) -> dict[str, Any]:
             return parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             return {}
+
+
+def format_qwen_prompt(prompt: str) -> str:
+    return (
+        "<|im_start|>system\n"
+        "Bạn là trợ lý AI của BigPlant. Trả lời đúng yêu cầu, không tự tạo lượt hội thoại mới."
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"{prompt.strip()}"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
