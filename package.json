@@ -1,0 +1,21 @@
+{
+  "name": "bigplant-chatbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node launcher for BigPlant local Python RAG chatbot",
+  "scripts": {
+    "doctor": "node scripts/node/doctor.mjs",
+    "env:init": "node scripts/node/init-env.mjs",
+    "deps": "node scripts/node/install-deps.mjs",
+    "deps:cuda": "node scripts/node/install-deps.mjs --cuda",
+    "dev": "node scripts/node/run-python.mjs -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "start": "node scripts/node/run-python.mjs -m uvicorn app.main:app --host 0.0.0.0 --port 8000",
+    "compile": "node scripts/node/run-python.mjs -m compileall app scripts",
+    "ingest:products": "node scripts/node/run-python.mjs scripts/ingest_products.py",
+    "ingest:knowledge": "node scripts/node/run-python.mjs scripts/ingest_knowledge.py"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

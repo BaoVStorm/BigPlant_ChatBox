@@ -19,6 +19,7 @@ pymongo
 llama-cpp-python
 sentence-transformers
 MongoDB Atlas Vector Search
+Node.js launcher scripts
 ```
 
 Model khuyến nghị cho máy RTX 4060 Ti 16GB:
@@ -50,6 +51,41 @@ Không commit `.env`. File này đã được ignore.
 
 ## Cài Đặt
 
+### Cách khuyến nghị bằng Node.js
+
+Cài Node.js 20+ trước, sau đó dùng npm làm launcher cho backend Python:
+
+```bash
+npm run env:init
+npm run deps:cuda
+npm run doctor
+```
+
+Nếu không dùng CUDA cho `llama-cpp-python`:
+
+```bash
+npm run deps
+```
+
+Các script npm có sẵn:
+
+```bash
+npm run dev              # chạy FastAPI reload
+npm run start            # chạy FastAPI production-style
+npm run doctor           # kiểm tra Python, .env, packages, model file
+npm run compile          # compile Python files
+npm run ingest:products  # embed products vào MongoDB
+npm run ingest:knowledge # embed knowledge articles vào MongoDB
+```
+
+Nếu Python không nằm ở đường dẫn mặc định, set biến `BIGPLANT_PYTHON`:
+
+```bash
+BIGPLANT_PYTHON=/path/to/python npm run dev
+```
+
+### Cách chạy Python trực tiếp
+
 Nên dùng Python 3.10 hoặc 3.11. Máy hiện có conda env `bigplants` nên có thể dùng:
 
 ```bash
@@ -70,6 +106,14 @@ huggingface-cli download Qwen/Qwen2.5-7B-Instruct-GGUF qwen2.5-7b-instruct-q4_k_
 ```
 
 ## Chạy API
+
+Chạy bằng npm:
+
+```bash
+npm run dev
+```
+
+Hoặc chạy Python trực tiếp:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -94,10 +138,22 @@ curl -X POST http://localhost:8000/api/chat/message \
 Embed products vào collection `products`:
 
 ```bash
+npm run ingest:products
+```
+
+Hoặc:
+
+```bash
 python scripts/ingest_products.py
 ```
 
 Embed articles từ `plant_knowledge_articles` vào `knowledge_chunks`:
+
+```bash
+npm run ingest:knowledge
+```
+
+Hoặc:
 
 ```bash
 python scripts/ingest_knowledge.py
