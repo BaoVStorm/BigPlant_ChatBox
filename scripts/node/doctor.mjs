@@ -44,6 +44,15 @@ if (!existsSync(".env")) {
       warn(`Chưa thấy local LLM model: ${modelPath}`);
     }
   }
+
+  if (env.EMBEDDING_MODEL_NAME?.startsWith(".") || env.EMBEDDING_MODEL_NAME?.startsWith("/")) {
+    const embeddingPath = resolve(env.EMBEDDING_MODEL_NAME);
+    if (existsSync(embeddingPath)) {
+      ok(`Local embedding model tồn tại: ${embeddingPath}`);
+    } else {
+      warn(`Chưa thấy local embedding model: ${embeddingPath}. Chạy: npm run embedding:download`);
+    }
+  }
 }
 
 for (const moduleName of requiredImports) {

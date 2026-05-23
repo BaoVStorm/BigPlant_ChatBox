@@ -11,6 +11,7 @@ models/*.safetensors
 models/**/*.gguf
 models/**/*.bin
 models/**/*.safetensors
+models/embeddings/
 *.gguf
 *.bin
 *.safetensors

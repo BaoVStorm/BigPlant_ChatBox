@@ -16,13 +16,13 @@ class Settings(BaseSettings):
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
 
-    llm_model_path: str = Field(default="./models/qwen2.5-7b-instruct-q4_k_m.gguf", alias="LLM_MODEL_PATH")
+    llm_model_path: str = Field(default="./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf", alias="LLM_MODEL_PATH")
     llm_context_size: int = Field(default=4096, alias="LLM_CONTEXT_SIZE")
     llm_gpu_layers: int = Field(default=-1, alias="LLM_GPU_LAYERS")
     llm_max_tokens: int = Field(default=768, alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
 
-    embedding_model_name: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL_NAME")
+    embedding_model_name: str = Field(default="./models/embeddings/bge-m3", alias="EMBEDDING_MODEL_NAME")
     embedding_device: str = Field(default="cuda", alias="EMBEDDING_DEVICE")
 
     product_vector_index: str = Field(default="product_vector_index", alias="PRODUCT_VECTOR_INDEX")

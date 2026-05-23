@@ -10,6 +10,8 @@
     "deps": "node scripts/node/install-deps.mjs",
     "deps:cuda": "node scripts/node/install-deps.mjs --cuda",
     "model:download": "node model_downloader/download_qwen2_5_7b_gguf.mjs",
+    "embedding:download": "node model_downloader/download_bge_m3_embedding.mjs",
+    "models:download": "npm run model:download && npm run embedding:download",
     "dev": "node scripts/node/run-python.mjs -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
     "start": "node scripts/node/run-python.mjs -m uvicorn app.main:app --host 0.0.0.0 --port 8000",
     "compile": "node scripts/node/run-python.mjs -m compileall app scripts",

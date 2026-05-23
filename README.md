@@ -42,8 +42,8 @@ Các biến quan trọng:
 ```env
 MONGO_URI=mongodb+srv://<username>:<password>@cluster0.flsvljh.mongodb.net/
 MONGO_DB_NAME=bigplant
-LLM_MODEL_PATH=./models/qwen2.5-7b-instruct-q4_k_m.gguf
-EMBEDDING_MODEL_NAME=BAAI/bge-m3
+LLM_MODEL_PATH=./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+EMBEDDING_MODEL_NAME=./models/embeddings/bge-m3
 EMBEDDING_DEVICE=cuda
 ```
 
@@ -74,6 +74,8 @@ npm run dev              # chạy FastAPI reload
 npm run start            # chạy FastAPI production-style
 npm run doctor           # kiểm tra Python, .env, packages, model file
 npm run model:download   # tải Qwen2.5-7B-Instruct GGUF về models/
+npm run embedding:download # tải BAAI/bge-m3 về models/embeddings/
+npm run models:download  # tải cả LLM và embedding model
 npm run compile          # compile Python files
 npm run ingest:products  # embed products vào MongoDB
 npm run ingest:knowledge # embed knowledge articles vào MongoDB
@@ -112,13 +114,43 @@ Script này gọi file độc lập:
 model_downloader/download_qwen2_5_7b_gguf.mjs
 ```
 
-Mặc định model được tải về:
+Mặc định model được tải về dạng 2 file split GGUF:
 
 ```txt
-models/qwen2.5-7b-instruct-q4_k_m.gguf
+models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+models/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf
+```
+
+Với split GGUF, `LLM_MODEL_PATH` cần trỏ tới file đầu tiên:
+
+```env
+LLM_MODEL_PATH=./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
 ```
 
 Các file model lớn như `.gguf`, `.bin`, `.safetensors` đã được ignore trong `.gitignore`, không commit lên Git.
+
+## Tải Embedding Model
+
+Embedding mặc định dùng `BAAI/bge-m3`. Có 2 cách dùng:
+
+```txt
+BAAI/bge-m3                     # sentence-transformers tự tải vào cache khi chạy lần đầu
+./models/embeddings/bge-m3      # dùng bản đã tải local trong project
+```
+
+Cách khuyến nghị cho dự án này là tải về local:
+
+```bash
+npm run embedding:download
+```
+
+Sau khi tải xong, cấu hình `.env`:
+
+```env
+EMBEDDING_MODEL_NAME=./models/embeddings/bge-m3
+```
+
+Folder `models/embeddings/` đã được ignore để tránh commit model embedding lên Git.
 
 Ví dụ nếu đã có `huggingface-cli`:
 

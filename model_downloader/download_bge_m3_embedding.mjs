@@ -2,39 +2,49 @@ import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { get } from "node:https";
 
-const REPO_URL = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main";
+const REPO_URL = "https://huggingface.co/BAAI/bge-m3/resolve/main";
 const MODEL_FILES = [
-  "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-  "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+  "1_Pooling/config.json",
+  "config.json",
+  "config_sentence_transformers.json",
+  "modules.json",
+  "pytorch_model.bin",
+  "sentence_bert_config.json",
+  "sentencepiece.bpe.model",
+  "special_tokens_map.json",
+  "tokenizer.json",
+  "tokenizer_config.json",
+  "colbert_linear.pt",
+  "sparse_linear.pt"
 ];
 
-const outputArg = process.argv[2] || "./models";
-const outputDir = resolve(outputArg.endsWith(".gguf") ? dirname(outputArg) : outputArg);
-
-mkdirSync(outputDir, { recursive: true });
+const outputDir = resolve(process.argv[2] || "./models/embeddings/bge-m3");
 
 try {
-  console.log("Downloading Qwen2.5-7B-Instruct GGUF Q4_K_M split files");
+  console.log("Downloading BAAI/bge-m3 embedding model");
   console.log(`Output directory: ${outputDir}`);
 
   for (const fileName of MODEL_FILES) {
-    const url = `${REPO_URL}/${fileName}`;
+    const url = `${REPO_URL}/${encodePath(fileName)}`;
     const outputPath = join(outputDir, fileName);
-    const existingBytes = existsSync(outputPath) ? statSync(outputPath).size : 0;
+    mkdirSync(dirname(outputPath), { recursive: true });
 
+    const existingBytes = existsSync(outputPath) ? statSync(outputPath).size : 0;
     console.log(`\nFile: ${fileName}`);
     console.log(`URL: ${url}`);
     console.log(`Output: ${outputPath}`);
     await download(url, outputPath, existingBytes);
   }
 
-  console.log("\nAll model files downloaded.");
-  console.log(
-    "Set LLM_MODEL_PATH=./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
-  );
+  console.log("\nEmbedding model downloaded.");
+  console.log("Set EMBEDDING_MODEL_NAME=./models/embeddings/bge-m3");
 } catch (error) {
   console.error(`\n${error.message}`);
   process.exit(1);
+}
+
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function download(url, destination, resumeFrom = 0, redirectCount = 0) {
