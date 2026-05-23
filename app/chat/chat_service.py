@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from app.knowledge.rag_handler import PlantCareRagHandler
@@ -21,8 +22,12 @@ class ChatService:
         self.rag_handler = PlantCareRagHandler(llm=self.llm)
 
     def handle_message(self, message: str, user_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
+        started_at = perf_counter()
+        route_started_at = perf_counter()
         route = self.router.classify(message)
+        route_ms = elapsed_ms(route_started_at)
 
+        handler_started_at = perf_counter()
         if route.intent == "product_info":
             result = self.product_handler.handle(message, route)
         elif route.intent == "recommendation":
@@ -42,8 +47,14 @@ class ChatService:
                 "metadata": {"route": route.model_dump()},
             }
 
+        handler_ms = elapsed_ms(handler_started_at)
         result.setdefault("metadata", {})["user_id"] = user_id
         result["metadata"]["session_id"] = session_id
+        result["metadata"]["timing_ms"] = {
+            "route": route_ms,
+            "handler": handler_ms,
+            "total": elapsed_ms(started_at),
+        }
         return result
 
     def _handle_cart_order(self, route) -> dict[str, Any]:
@@ -71,3 +82,7 @@ class ChatService:
             "sources": [],
             "metadata": {"route": route.model_dump(), "llm_available": self.llm.is_available},
         }
+
+
+def elapsed_ms(started_at: float) -> int:
+    return int((perf_counter() - started_at) * 1000)

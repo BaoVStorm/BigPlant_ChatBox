@@ -14,7 +14,7 @@ class IntentRouter:
 
     def classify(self, message: str) -> IntentRoute:
         heuristic_route = self._classify_by_rules(message)
-        if heuristic_route.confidence >= 0.82 or not self.llm.is_available:
+        if heuristic_route.intent != "unclear" or not self.llm.is_available:
             return heuristic_route
 
         prompt = ROUTER_PROMPT.format(message=message)

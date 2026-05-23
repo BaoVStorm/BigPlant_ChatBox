@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+from threading import Lock
 from typing import Any
 
 from app.config import Settings, get_settings
 
 
 class LocalLLM:
+    _shared_models: dict[str, Any] = {}
+    _shared_lock = Lock()
+
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self._model: Any | None = None
         self._load_error: str | None = None
 
     @property
@@ -22,23 +25,29 @@ class LocalLLM:
         return self._load_error
 
     def _load(self) -> Any:
-        if self._model is not None:
-            return self._model
+        model_key = str(self.settings.resolved_llm_model_path)
+        if model_key in self._shared_models:
+            return self._shared_models[model_key]
         if not self.is_available:
             raise RuntimeError(f"Local LLM model file not found: {self.settings.resolved_llm_model_path}")
-        try:
-            from llama_cpp import Llama
 
-            self._model = Llama(
-                model_path=str(self.settings.resolved_llm_model_path),
-                n_ctx=self.settings.llm_context_size,
-                n_gpu_layers=self.settings.llm_gpu_layers,
-                verbose=False,
-            )
-            return self._model
-        except Exception as exc:  # pragma: no cover - depends on native llama.cpp runtime
-            self._load_error = str(exc)
-            raise RuntimeError(f"Failed to load local LLM: {exc}") from exc
+        with self._shared_lock:
+            if model_key in self._shared_models:
+                return self._shared_models[model_key]
+            try:
+                from llama_cpp import Llama
+
+                model = Llama(
+                    model_path=model_key,
+                    n_ctx=self.settings.llm_context_size,
+                    n_gpu_layers=self.settings.llm_gpu_layers,
+                    verbose=False,
+                )
+                self._shared_models[model_key] = model
+                return model
+            except Exception as exc:  # pragma: no cover - depends on native llama.cpp runtime
+                self._load_error = str(exc)
+                raise RuntimeError(f"Failed to load local LLM: {exc}") from exc
 
     def generate(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         model = self._load()
