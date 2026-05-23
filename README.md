@@ -87,6 +87,12 @@ Nếu Python không nằm ở đường dẫn mặc định, set biến `BIGPLAN
 BIGPLANT_PYTHON=/path/to/python npm run dev
 ```
 
+`npm run dev` và `npm run start` đọc `APP_HOST`, `APP_PORT` từ `.env`. Ví dụ muốn chạy port `3015`:
+
+```env
+APP_PORT=3015
+```
+
 ### Cách chạy Python trực tiếp
 
 Nên dùng Python 3.10 hoặc 3.11. Máy hiện có conda env `bigplants` nên có thể dùng:
