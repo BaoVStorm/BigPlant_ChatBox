@@ -8,3 +8,9 @@ __pycache__/
 models/*.gguf
 models/*.bin
 models/*.safetensors
+models/**/*.gguf
+models/**/*.bin
+models/**/*.safetensors
+*.gguf
+*.bin
+*.safetensors
