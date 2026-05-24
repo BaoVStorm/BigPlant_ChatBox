@@ -20,7 +20,7 @@ node model_downloader/download_qwen2_5_7b_gguf.mjs
 Hoặc chạy qua npm:
 
 ```bash
-npm run model:download:7b
+npm run model:download:gwen
 npm run model:download:llama
 npm run model:download:vinallama
 ```

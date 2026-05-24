@@ -93,7 +93,7 @@ npm run dev              # chạy FastAPI reload
 npm run start            # chạy FastAPI production-style
 npm run doctor           # kiểm tra Python, .env, packages, model file
 npm run model:download   # alias tải Qwen2.5-7B-Instruct GGUF
-npm run model:download:7b # tải Qwen2.5-7B-Instruct GGUF
+npm run model:download:gwen # tải Qwen2.5-7B-Instruct GGUF
 npm run model:download:llama # tải Meta-Llama-3.1-8B-Instruct GGUF
 npm run model:download:vinallama # tải VinaLLaMA-7B-Chat GGUF
 npm run embedding:download # tải BAAI/bge-m3 về models/embeddings/
@@ -135,7 +135,7 @@ Ba lựa chọn hiện có:
 
 | Model | Khi nên dùng | Lệnh tải | `LLM_MODEL_PATH` |
 | --- | --- | --- | --- |
-| Qwen2.5-7B-Instruct Q4_K_M | Cân bằng chất lượng/tốc độ, khuyến nghị mặc định | `npm run model:download:7b` | `./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf` |
+| Qwen2.5-7B-Instruct Q4_K_M | Cân bằng chất lượng/tốc độ, khuyến nghị mặc định | `npm run model:download:gwen` | `./models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf` |
 | Meta-Llama-3.1-8B-Instruct Q4_K_M | Muốn thử model họ Llama, general/chat tốt, tiếng Việt ổn | `npm run model:download:llama` | `./models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` |
 | VinaLLaMA-7B-Chat Q5_0 | Muốn model thiên tiếng Việt, nhẹ hơn Llama 3.1 nhưng cũ hơn | `npm run model:download:vinallama` | `./models/vinallama-7b-chat_q5_0.gguf` |
 
