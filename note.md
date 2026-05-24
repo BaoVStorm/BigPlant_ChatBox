@@ -770,3 +770,13 @@ LLM answer based on context
   ↓
 Return answer + sources
 ```
+
+# X. Gợi ý local model cho cấu hình hiện tại
+
+Máy hiện tại phù hợp chạy local LLM dạng GGUF 7B-8B quantized. Model mặc định nên là Qwen2.5-7B-Instruct Q4_K_M vì cân bằng tốt giữa tiếng Việt, khả năng hiểu intent, tốc độ và chất lượng diễn giải.
+
+Nếu muốn so sánh thêm model khác Qwen, có thể dùng Meta-Llama-3.1-8B-Instruct Q4_K_M. Model này mạnh về general chat và reasoning, phù hợp để benchmark chất lượng trả lời, nhưng tiếng Việt thường không đều bằng Qwen trong một số câu tự nhiên.
+
+Nếu muốn ưu tiên tiếng Việt, có thể dùng VinaLLaMA-7B-Chat Q5_0. Model này thiên về tiếng Việt và phù hợp test hội thoại Việt, nhưng cũ hơn Qwen/Llama nên khả năng reasoning và tuân thủ instruction có thể kém hơn.
+
+Khuyến nghị thực tế: dùng Qwen2.5-7B làm mặc định cho chatbot production ban đầu, dùng Llama 3.1 8B để đối chiếu chất lượng, và dùng VinaLLaMA để kiểm tra các tình huống hội thoại tiếng Việt thuần.

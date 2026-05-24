@@ -2,10 +2,12 @@
 
 Folder này chỉ dùng để tải model local, không được import vào backend và không nằm trong flow hệ thống.
 
-Model mặc định:
+Các LLM downloader hiện có:
 
 ```txt
-Qwen2.5-7B-Instruct GGUF Q4_K_M
+Qwen2.5-7B-Instruct GGUF Q4_K_M       - mặc định, cân bằng
+Meta-Llama-3.1-8B-Instruct GGUF Q4_K_M - model khác họ Qwen, general/chat tốt
+VinaLLaMA-7B-Chat GGUF Q5_0            - thiên tiếng Việt hơn, cũ hơn
 ```
 
 Chạy bằng Node.js:
@@ -14,6 +16,22 @@ Chạy bằng Node.js:
 source ~/.nvm/nvm.sh
 node model_downloader/download_qwen2_5_7b_gguf.mjs
 ```
+
+Hoặc chạy qua npm:
+
+```bash
+npm run model:download:7b
+npm run model:download:llama
+npm run model:download:vinallama
+```
+
+Tải cả 3 LLM và embedding:
+
+```bash
+npm run models:download:all
+```
+
+## Qwen2.5-7B
 
 Mặc định model sẽ được tải về dạng 2 file split GGUF:
 
@@ -35,6 +53,44 @@ node model_downloader/download_qwen2_5_7b_gguf.mjs /duong/dan/toi/models
 ```
 
 Script có hỗ trợ resume nếu file tải dở đã tồn tại.
+
+## Meta-Llama-3.1-8B
+
+```bash
+node model_downloader/download_llama_3_1_8b_gguf.mjs
+```
+
+File tải về:
+
+```txt
+models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
+```
+
+Trong `.env`:
+
+```env
+LLM_MODEL_PATH=./models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
+LLM_PROMPT_FORMAT=auto
+```
+
+## VinaLLaMA-7B-Chat
+
+```bash
+node model_downloader/download_vinallama_7b_gguf.mjs
+```
+
+File tải về:
+
+```txt
+models/vinallama-7b-chat_q5_0.gguf
+```
+
+Trong `.env`:
+
+```env
+LLM_MODEL_PATH=./models/vinallama-7b-chat_q5_0.gguf
+LLM_PROMPT_FORMAT=auto
+```
 
 ## Embedding Model
 

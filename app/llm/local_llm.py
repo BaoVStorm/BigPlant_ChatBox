@@ -52,10 +52,19 @@ class LocalLLM:
     def generate(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         model = self._load()
         output = model(
-            format_qwen_prompt(prompt),
+            format_prompt(prompt, self.settings.llm_prompt_format, str(self.settings.resolved_llm_model_path)),
             max_tokens=max_tokens or self.settings.llm_max_tokens,
             temperature=self.settings.llm_temperature if temperature is None else temperature,
-            stop=["</s>", "<|im_end|>", "<|im_start|>", "\nUser:", "\nNgười dùng:", "\nAssistant:"],
+            stop=[
+                "</s>",
+                "<|im_end|>",
+                "<|im_start|>",
+                "<|eot_id|>",
+                "<|end_of_text|>",
+                "\nUser:",
+                "\nNgười dùng:",
+                "\nAssistant:",
+            ],
         )
         return str(output["choices"][0]["text"]).strip()
 
@@ -79,13 +88,38 @@ def parse_json_object(text: str) -> dict[str, Any]:
             return {}
 
 
-def format_qwen_prompt(prompt: str) -> str:
+def format_prompt(prompt: str, prompt_format: str, model_path: str) -> str:
+    resolved_format = resolve_prompt_format(prompt_format, model_path)
+    system = "Bạn là trợ lý AI của BigPlant. Trả lời đúng yêu cầu, không tự tạo lượt hội thoại mới."
+    user = prompt.strip()
+
+    if resolved_format == "llama3":
+        return (
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n\n"
+            f"{system}"
+            "<|eot_id|>"
+            "<|start_header_id|>user<|end_header_id|>\n\n"
+            f"{user}"
+            "<|eot_id|>"
+            "<|start_header_id|>assistant<|end_header_id|>\n\n"
+        )
+
     return (
         "<|im_start|>system\n"
-        "Bạn là trợ lý AI của BigPlant. Trả lời đúng yêu cầu, không tự tạo lượt hội thoại mới."
+        f"{system}"
         "<|im_end|>\n"
         "<|im_start|>user\n"
-        f"{prompt.strip()}"
+        f"{user}"
         "<|im_end|>\n"
         "<|im_start|>assistant\n"
     )
+
+
+def resolve_prompt_format(prompt_format: str, model_path: str) -> str:
+    if prompt_format and prompt_format != "auto":
+        return prompt_format
+    lowered = model_path.lower()
+    if "llama-3" in lowered or "meta-llama-3" in lowered:
+        return "llama3"
+    return "chatml"
