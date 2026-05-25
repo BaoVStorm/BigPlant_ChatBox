@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from app.embeddings.embedding_service import EmbeddingService
 from app.llm.local_llm import LocalLLM
-from app.llm.prompts import RECOMMENDATION_PROMPT
 from app.products.product_repository import ProductRepository, context_matches_filters
 from app.router.schemas import IntentRoute
 
@@ -49,21 +47,8 @@ class RecommendationHandler:
             }
 
         product_cards = [build_recommendation_card(product, filters) for product in products]
-        prompt = RECOMMENDATION_PROMPT.format(
-            message=message,
-            filters_json=json.dumps(filters, ensure_ascii=False, default=str),
-            products_json=json.dumps(product_cards, ensure_ascii=False, default=str),
-        )
-        answer = None
+        answer = build_recommendation_answer(products, filters)
         llm_used = False
-        if self.llm.is_available:
-            try:
-                answer = self.llm.generate(prompt)
-                llm_used = True
-            except Exception:
-                answer = None
-        if not answer:
-            answer = build_recommendation_answer(products, filters)
 
         return {
             "intent": "recommendation",

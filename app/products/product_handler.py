@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from app.llm.local_llm import LocalLLM
-from app.llm.prompts import PRODUCT_INFO_PROMPT
 from app.products.product_repository import ProductRepository
 from app.router.schemas import IntentRoute
 
@@ -39,23 +37,8 @@ class ProductInfoHandler:
                 "metadata": {"route": route.model_dump()},
             }
 
-        prompt = PRODUCT_INFO_PROMPT.format(
-            message=message,
-            product_json=json.dumps(context, ensure_ascii=False, default=str),
-            variants_json=json.dumps(context.get("variants") or [], ensure_ascii=False, default=str),
-            images_json=json.dumps(context.get("images") or [], ensure_ascii=False, default=str),
-        )
-
-        answer = None
+        answer = build_product_answer(context)
         llm_used = False
-        if self.llm.is_available:
-            try:
-                answer = self.llm.generate(prompt)
-                llm_used = True
-            except Exception:
-                answer = None
-        if not answer:
-            answer = build_product_answer(context)
 
         return {
             "intent": "product_info",
