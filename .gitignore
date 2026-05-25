@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+models/*.gguf
+models/*.bin
+models/*.safetensors
+models/**/*.gguf
+models/**/*.bin
+models/**/*.safetensors
+models/embeddings/
+*.gguf
+*.bin
+*.safetensors
