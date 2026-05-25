@@ -136,7 +136,13 @@ File:
 app/router/intent_router.py
 ```
 
-Router hiện tại là hybrid nhưng nghiêng mạnh về heuristic.
+Router hiện tại là hybrid 3 tầng:
+
+```txt
+Tầng 1: weighted rules
+Tầng 2: semantic intent examples bằng embedding
+Tầng 3: local LLM fallback only when uncertain
+```
 
 ### 6.1. Bước normalize text
 
@@ -207,9 +213,104 @@ Vì vậy chúng chủ yếu phục vụ vector search / semantic matching,
 không phải hard filter trực tiếp trong MongoDB.
 ```
 
-### 6.3. Heuristic classification
+### 6.3. Tầng 1: weighted rules
 
-Router dùng danh sách marker để chia intent.
+Router không còn chỉ check marker kiểu substring đơn giản.
+Hiện tại mỗi intent có một tập pattern/rule với trọng số khác nhau.
+
+Ví dụ ý tưởng:
+
+```txt
+"thêm vào giỏ"     → cart_order score rất cao
+"bao nhiêu tiền"   → product_info score cao
+"tư vấn"           → recommendation score cao
+"vàng lá"          → plant_care score cao
+"xin chào"         → general score cao
+```
+
+Sau khi chấm điểm:
+
+```txt
+1. Lấy intent có score cao nhất
+2. So với score intent đứng thứ hai
+3. Nếu score đủ mạnh và margin đủ xa thì return luôn
+4. Nếu chưa chắc chắn thì chuyển sang semantic layer
+```
+
+### 6.4. Tầng 2: semantic intent examples
+
+Nếu rules chưa đủ chắc chắn, router dùng embedding model để so query với tập câu mẫu của từng intent.
+
+Ví dụ mỗi intent có nhiều câu mẫu:
+
+```txt
+product_info:
+  Cây monstera bao nhiêu tiền
+  Shop còn mẫu này không
+  Có ảnh sản phẩm không
+
+recommendation:
+  Tôi muốn cây dễ chăm
+  Mình muốn tìm một cây tặng sinh nhật
+  Phòng tôi ít nắng nên chọn cây gì
+
+plant_care:
+  Tại sao lá cây bị vàng
+  Cây bị úng rễ xử lý sao
+
+cart_order:
+  Thêm cây này vào giỏ hàng
+  Mua ngay sản phẩm này
+
+general:
+  Xin chào
+  Alo bạn ơi
+```
+
+Flow semantic:
+
+```txt
+1. Embed câu user
+2. Embed các câu mẫu intent
+3. Tính similarity
+4. Chọn intent có điểm semantic cao nhất
+5. Nếu semantic score đủ tốt thì return
+6. Nếu vẫn mơ hồ thì chuyển sang LLM fallback
+```
+
+Điểm mạnh của semantic layer:
+
+```txt
+Không cần user gõ đúng nguyên marker.
+Hiểu được câu gần nghĩa/paraphrase tốt hơn heuristic thô.
+Ví dụ:
+  "shop còn mẫu này không"
+  "mình cần cây cho góc làm việc"
+  "lá cây bị úng thì cứu sao"
+```
+
+### 6.5. Tầng 3: local LLM fallback
+
+Local LLM chỉ được gọi nếu:
+
+```txt
+rules chưa đủ chắc
+AND semantic chưa đủ chắc
+AND local LLM available
+```
+
+Khi đó router dùng prompt JSON để LLM chọn intent.
+
+### 6.6. Khi nào router dừng ở mỗi tầng
+
+```txt
+Rules đủ mạnh             → dừng ở rules
+Rules chưa rõ nhưng semantic rõ → dừng ở semantic
+Cả rules và semantic đều mơ hồ  → gọi local LLM
+Nếu local LLM fail             → fallback về semantic hoặc rule tốt nhất hiện có
+```
+
+### 6.7. Rule groups hiện có
 
 #### cart_order
 
@@ -308,23 +409,15 @@ thì intent = `general`.
 
 Nếu không match heuristic nào, router trả `unclear`.
 
-### 6.4. Khi nào router gọi local LLM
+### 6.8. Ý nghĩa thực tế
 
-Hiện tại router chỉ gọi LLM khi:
-
-```txt
-heuristic_route.intent == unclear
-AND local LLM available
-```
-
-Nghĩa là:
+Kết quả hiện tại là router hiểu tốt hơn so với kiểu marker cứng trước đây:
 
 ```txt
-Câu rõ ràng → không gọi LLM để route
-Câu mơ hồ → có thể gọi LLM để route
+Không cần đúng y nguyên marker.
+Chỉ cần gần nghĩa hoặc cùng ngữ cảnh vẫn có thể match được.
+Những câu rất mơ hồ mới cần LLM fallback.
 ```
-
-Điều này giúp giảm độ trễ đáng kể.
 
 ## 7. Local LLM đang được dùng như thế nào
 

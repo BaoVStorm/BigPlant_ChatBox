@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from threading import Lock
 
 import numpy as np
 
@@ -8,17 +9,24 @@ from app.config import Settings, get_settings
 
 
 class EmbeddingService:
+    _shared_models = {}
+    _shared_lock = Lock()
+
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
-        self._model = None
 
     def _load(self):
-        if self._model is not None:
-            return self._model
-        from sentence_transformers import SentenceTransformer
+        model_key = (self.settings.embedding_model_name, self.settings.embedding_device)
+        if model_key in self._shared_models:
+            return self._shared_models[model_key]
+        with self._shared_lock:
+            if model_key in self._shared_models:
+                return self._shared_models[model_key]
+            from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(self.settings.embedding_model_name, device=self.settings.embedding_device)
-        return self._model
+            model = SentenceTransformer(self.settings.embedding_model_name, device=self.settings.embedding_device)
+            self._shared_models[model_key] = model
+            return model
 
     def embed_text(self, text: str) -> list[float]:
         model = self._load()

@@ -9,7 +9,7 @@ from app.llm.prompts import GENERAL_PROMPT
 from app.products.product_handler import ProductInfoHandler
 from app.products.product_repository import ProductRepository
 from app.recommendations.recommendation_handler import RecommendationHandler
-from app.router.intent_router import IntentRouter
+from app.router.intent_router import IntentRouter, normalize_text
 
 
 class ChatService:
@@ -67,6 +67,15 @@ class ChatService:
         }
 
     def _handle_general(self, message: str, route) -> dict[str, Any]:
+        if should_use_deterministic_general(message):
+            return {
+                "intent": "general",
+                "message": "Xin chào! Mình có thể giúp bạn tìm cây phù hợp, kiểm tra giá và tồn kho, hoặc trả lời câu hỏi chăm cây của BigPlant.",
+                "products": [],
+                "sources": [],
+                "metadata": {"route": route.model_dump(), "llm_available": self.llm.is_available, "llm_used": False},
+            }
+
         answer = None
         if self.llm.is_available:
             try:
@@ -80,9 +89,15 @@ class ChatService:
             "message": answer,
             "products": [],
             "sources": [],
-            "metadata": {"route": route.model_dump(), "llm_available": self.llm.is_available},
+            "metadata": {"route": route.model_dump(), "llm_available": self.llm.is_available, "llm_used": bool(answer and self.llm.is_available)},
         }
 
 
 def elapsed_ms(started_at: float) -> int:
     return int((perf_counter() - started_at) * 1000)
+
+
+def should_use_deterministic_general(message: str) -> bool:
+    normalized = normalize_text(message)
+    greeting_markers = ["xin chao", "hello", "hi", "alo", "cam on"]
+    return any(marker in normalized for marker in greeting_markers) and len(normalized.split()) <= 8
