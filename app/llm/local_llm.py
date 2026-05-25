@@ -11,6 +11,7 @@ from app.config import Settings, get_settings
 class LocalLLM:
     _shared_models: dict[str, Any] = {}
     _shared_lock = Lock()
+    _infer_lock = Lock()
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -51,21 +52,22 @@ class LocalLLM:
 
     def generate(self, prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
         model = self._load()
-        output = model(
-            format_prompt(prompt, self.settings.llm_prompt_format, str(self.settings.resolved_llm_model_path)),
-            max_tokens=max_tokens or self.settings.llm_max_tokens,
-            temperature=self.settings.llm_temperature if temperature is None else temperature,
-            stop=[
-                "</s>",
-                "<|im_end|>",
-                "<|im_start|>",
-                "<|eot_id|>",
-                "<|end_of_text|>",
-                "\nUser:",
-                "\nNgười dùng:",
-                "\nAssistant:",
-            ],
-        )
+        with self._infer_lock:
+            output = model(
+                format_prompt(prompt, self.settings.llm_prompt_format, str(self.settings.resolved_llm_model_path)),
+                max_tokens=max_tokens or self.settings.llm_max_tokens,
+                temperature=self.settings.llm_temperature if temperature is None else temperature,
+                stop=[
+                    "</s>",
+                    "<|im_end|>",
+                    "<|im_start|>",
+                    "<|eot_id|>",
+                    "<|end_of_text|>",
+                    "\nUser:",
+                    "\nNgười dùng:",
+                    "\nAssistant:",
+                ],
+            )
         return str(output["choices"][0]["text"]).strip()
 
     def generate_json(self, prompt: str) -> dict[str, Any]:
@@ -95,7 +97,6 @@ def format_prompt(prompt: str, prompt_format: str, model_path: str) -> str:
 
     if resolved_format == "llama3":
         return (
-            "<|begin_of_text|>"
             "<|start_header_id|>system<|end_header_id|>\n\n"
             f"{system}"
             "<|eot_id|>"

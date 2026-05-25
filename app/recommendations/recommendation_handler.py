@@ -6,8 +6,7 @@ from typing import Any
 from app.embeddings.embedding_service import EmbeddingService
 from app.llm.local_llm import LocalLLM
 from app.llm.prompts import RECOMMENDATION_PROMPT
-from app.products.product_handler import format_price_range
-from app.products.product_repository import ProductRepository
+from app.products.product_repository import ProductRepository, context_matches_filters
 from app.router.schemas import IntentRoute
 
 
@@ -31,8 +30,10 @@ class RecommendationHandler:
         if len(products) < 3 or should_use_vector(message, filters):
             try:
                 query_vector = self.embeddings.embed_text(message)
-                vector_products = self.repository.vector_search_products(query_vector, filters=filters, limit=8)
-                products = merge_products(products, vector_products)
+                vector_products = self.repository.vector_search_products(query_vector, filters=filters, limit=10)
+                vector_contexts = self.repository.hydrate_product_contexts(vector_products, limit=10)
+                vector_contexts = [context for context in vector_contexts if context_matches_filters(context, filters)]
+                products = merge_products(products, vector_contexts)
                 used_vector = True
             except Exception as exc:
                 route.entities["vector_error"] = str(exc)
@@ -47,10 +48,11 @@ class RecommendationHandler:
                 "metadata": {"route": route.model_dump(), "filters": filters, "used_vector": used_vector},
             }
 
+        product_cards = [build_recommendation_card(product, filters) for product in products]
         prompt = RECOMMENDATION_PROMPT.format(
             message=message,
             filters_json=json.dumps(filters, ensure_ascii=False, default=str),
-            products_json=json.dumps(products, ensure_ascii=False, default=str),
+            products_json=json.dumps(product_cards, ensure_ascii=False, default=str),
         )
         answer = None
         llm_used = False
@@ -66,22 +68,46 @@ class RecommendationHandler:
         return {
             "intent": "recommendation",
             "message": answer,
-            "products": [build_recommendation_card(product) for product in products],
+            "products": product_cards,
             "sources": [],
             "metadata": {"route": route.model_dump(), "filters": filters, "used_vector": used_vector, "llm_used": llm_used},
         }
 
 
 def should_use_vector(message: str, filters: dict[str, Any]) -> bool:
-    semantic_words = ["chill", "sang", "đẹp", "dep", "quà", "qua", "minimal", "hiện đại", "hien dai", "decor"]
+    semantic_words = [
+        "chill",
+        "sang",
+        "đẹp",
+        "dep",
+        "quà",
+        "qua",
+        "minimal",
+        "hiện đại",
+        "hien dai",
+        "decor",
+        "ít nắng",
+        "it nang",
+        "thiếu sáng",
+        "thieu sang",
+        "để bàn",
+        "de ban",
+        "phòng ngủ",
+        "phong ngu",
+        "phòng khách",
+        "phong khach",
+        "hay quên tưới",
+        "quen tuoi",
+    ]
+    unsupported_hard_filters = {"watering_need", "light_requirement", "placement", "pet_safe"}
     lowered = message.lower()
-    return any(word in lowered for word in semantic_words) or not filters
+    return any(word in lowered for word in semantic_words) or bool(unsupported_hard_filters & set(filters)) or not filters
 
 
 def merge_products(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
     for product in primary + secondary:
-        product_id = str(product.get("_id"))
+        product_id = str(product.get("_id") or (product.get("product") or {}).get("_id"))
         if product_id not in merged:
             merged[product_id] = product
         elif product.get("vector_score") is not None:
@@ -90,18 +116,18 @@ def merge_products(primary: list[dict[str, Any]], secondary: list[dict[str, Any]
 
 
 def rank_products(products: list[dict[str, Any]], filters: dict[str, Any]) -> list[dict[str, Any]]:
-    def score(product: dict[str, Any]) -> float:
-        total = float(product.get("vector_score") or 0.0)
-        if filters.get("care_level") and product.get("care_level") == filters["care_level"]:
+    def score(context: dict[str, Any]) -> float:
+        product = context.get("product") or {}
+        computed = context.get("computed") or {}
+        total = float(context.get("vector_score") or 0.0)
+        if computed.get("in_stock"):
             total += 1.0
-        if filters.get("watering_need") and product.get("watering_need") == filters["watering_need"]:
-            total += 1.0
-        if filters.get("light_requirement") and product.get("light_requirement") in {filters["light_requirement"], "indirect"}:
-            total += 1.0
-        if filters.get("placement") and filters["placement"] in (product.get("suitable_locations") or []):
-            total += 1.0
-        if filters.get("max_price") and product.get("price_min") and int(product["price_min"]) <= int(filters["max_price"]):
-            total += 1.0
+        if filters.get("care_level") and normalize_text(product.get("care_level")) == normalize_text(filters["care_level"]):
+            total += 1.3
+        if filters.get("max_price") and computed.get("price_min") is not None and float(computed["price_min"]) <= float(filters["max_price"]):
+            total += 1.2
+        if product.get("rating_avg"):
+            total += min(float(product.get("rating_avg") or 0), 5.0) / 10
         return total
 
     return sorted(products, key=score, reverse=True)
@@ -109,38 +135,59 @@ def rank_products(products: list[dict[str, Any]], filters: dict[str, Any]) -> li
 
 def build_recommendation_answer(products: list[dict[str, Any]], filters: dict[str, Any]) -> str:
     lines = ["Mình gợi ý một vài cây phù hợp nhất trong dữ liệu hiện tại:"]
-    for index, product in enumerate(products[:3], start=1):
+    for index, context in enumerate(products[:3], start=1):
+        product = context.get("product") or {}
+        computed = context.get("computed") or {}
         name = product.get("name") or "Sản phẩm"
-        price = format_price_range(product)
-        reason = build_reason(product, filters)
+        price = computed.get("price_text") or "chưa có dữ liệu giá"
+        reason = build_reason(context, filters)
         lines.append(f"{index}. {name}: {price}. {reason}")
-    lines.append("Bạn muốn mình lọc thêm theo ngân sách, vị trí đặt cây hoặc mức dễ chăm không?")
+    lines.append("Bạn muốn mình lọc thêm theo ngân sách, mức dễ chăm hoặc tình trạng còn hàng không?")
     return "\n".join(lines)
 
 
-def build_reason(product: dict[str, Any], filters: dict[str, Any]) -> str:
+def build_reason(context: dict[str, Any], filters: dict[str, Any]) -> str:
+    product = context.get("product") or {}
+    computed = context.get("computed") or {}
+    plant = context.get("plant") or {}
     reasons = []
     if product.get("care_level") == "easy":
         reasons.append("dễ chăm")
-    if product.get("watering_need") == "low":
-        reasons.append("không cần tưới nhiều")
-    if product.get("light_requirement") in {"low", "indirect"}:
-        reasons.append("hợp môi trường ít nắng/ánh sáng gián tiếp")
-    if filters.get("placement") and filters["placement"] in (product.get("suitable_locations") or []):
-        reasons.append("hợp vị trí bạn muốn đặt")
+    if computed.get("in_stock"):
+        reasons.append("đang có hàng")
+    if filters.get("max_price") and computed.get("price_min") is not None:
+        reasons.append("phù hợp ngân sách")
+    if plant.get("advantages"):
+        reasons.append("có mô tả/ưu điểm cây trong dữ liệu")
+    if context.get("vector_score") is not None:
+        reasons.append("phù hợp với nhu cầu mô tả theo tìm kiếm ngữ nghĩa")
     return "Phù hợp vì " + ", ".join(reasons) + "." if reasons else "Phù hợp với nhu cầu mô tả của bạn."
 
 
-def build_recommendation_card(product: dict[str, Any]) -> dict[str, Any]:
+def build_recommendation_card(context: dict[str, Any], filters: dict[str, Any]) -> dict[str, Any]:
+    product = context.get("product") or {}
+    category = context.get("category") or {}
+    plant = context.get("plant") or {}
+    computed = context.get("computed") or {}
     return {
         "id": product.get("_id"),
         "name": product.get("name"),
         "slug": product.get("slug"),
-        "price": format_price_range(product),
-        "price_min": product.get("price_min"),
-        "price_max": product.get("price_max"),
+        "short_description": product.get("short_description"),
         "care_level": product.get("care_level"),
-        "light_requirement": product.get("light_requirement"),
-        "watering_need": product.get("watering_need"),
-        "vector_score": product.get("vector_score"),
+        "category_name": category.get("name") if category else None,
+        "plant_common_name": plant.get("common_name") if plant else None,
+        "plant_scientific_name": plant.get("scientific_name") if plant else None,
+        "price": computed.get("price_text"),
+        "price_min": computed.get("price_min"),
+        "price_max": computed.get("price_max"),
+        "available_qty": computed.get("available_qty"),
+        "in_stock": computed.get("in_stock"),
+        "primary_image_url": computed.get("primary_image_url"),
+        "vector_score": context.get("vector_score"),
+        "reason": build_reason(context, filters),
     }
+
+
+def normalize_text(value: Any) -> str:
+    return str(value or "").strip().lower()

@@ -3,35 +3,54 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_product_embedding_text(product: dict[str, Any]) -> str:
+def build_product_embedding_text(context: dict[str, Any]) -> str:
+    product = context.get("product") or context
+    category = context.get("category") or {}
+    plant = context.get("plant") or {}
+    variants = context.get("variants") or []
+
     return "\n".join(
         [
-            f"Tên cây: {product.get('name') or ''}.",
+            f"Tên sản phẩm: {product.get('name') or ''}.",
+            f"SKU: {product.get('sku') or ''}.",
+            f"Loại sản phẩm: {product.get('product_type') or ''}.",
+            f"Danh mục: {category.get('name') or ''}.",
             f"Mô tả ngắn: {product.get('short_description') or ''}.",
-            f"Mô tả: {product.get('description') or ''}.",
+            f"Mô tả sản phẩm: {product.get('description') or ''}.",
             f"Mức chăm sóc: {product.get('care_level') or 'unknown'}.",
-            f"Ánh sáng: {product.get('light_requirement') or 'unknown'}.",
-            f"Nhu cầu tưới nước: {product.get('watering_need') or 'unknown'}.",
-            f"Độ ẩm: {product.get('humidity_need') or 'unknown'}.",
-            f"Trong nhà/ngoài trời: {product.get('indoor_outdoor') or 'unknown'}.",
-            f"An toàn cho thú cưng: {pet_safe_text(product.get('pet_safe'))}.",
-            f"Phù hợp đặt ở: {join_values(product.get('suitable_locations'))}.",
-            f"Phù hợp cho: {join_values(product.get('suitable_for'))}.",
-            f"Tags: {join_values(product.get('tags'))}.",
-            f"Hướng dẫn chăm sóc: {product.get('care_guide') or {}}.",
+            f"Tên khoa học: {plant.get('scientific_name') or ''}.",
+            f"Tên thường gọi: {plant.get('common_name') or ''}.",
+            f"Họ thực vật: {plant.get('family') or ''}.",
+            f"Chi/loài: {plant.get('genus') or ''} {plant.get('species') or ''}.",
+            f"Mô tả cây: {plant.get('description') or ''}.",
+            f"Công dụng: {plant.get('uses') or ''}.",
+            f"Ưu điểm: {plant.get('advantages') or ''}.",
+            f"Cảnh báo độc tính: {plant.get('toxicity_warning') or ''}.",
+            f"Ghi chú an toàn: {plant.get('safety_notes') or ''}.",
+            f"Mức bằng chứng: {plant.get('evidence_level') or ''}.",
+            f"Biến thể: {build_variant_text(variants)}.",
         ]
     )
 
 
-def join_values(value: Any) -> str:
+def build_variant_text(variants: list[dict[str, Any]]) -> str:
+    values = []
+    for variant in variants:
+        values.append(
+            " ".join(
+                [
+                    str(variant.get("variant_name") or ""),
+                    str(variant.get("variant_sku") or ""),
+                    stringify_attributes(variant.get("attributes")),
+                ]
+            ).strip()
+        )
+    return "; ".join(value for value in values if value)
+
+
+def stringify_attributes(value: Any) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{key}: {item}" for key, item in value.items())
     if isinstance(value, list):
         return ", ".join(str(item) for item in value)
     return str(value or "")
-
-
-def pet_safe_text(value: Any) -> str:
-    if value is True:
-        return "có"
-    if value is False:
-        return "không"
-    return "không rõ"

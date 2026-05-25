@@ -23,21 +23,27 @@ class ProductInfoHandler:
         if not product:
             return {
                 "intent": "product_info",
-                "message": "Bạn muốn hỏi thông tin của cây nào? Mình cần tên cây để kiểm tra giá, size và tồn kho trong hệ thống.",
+                "message": "Bạn muốn hỏi thông tin của cây nào? Mình cần tên cây để kiểm tra giá, size, tồn kho hoặc thông tin an toàn trong hệ thống.",
                 "products": [],
                 "sources": [],
                 "metadata": {"route": route.model_dump()},
             }
 
-        product_id = str(product.get("_id"))
-        variants = self.repository.get_product_variants(product_id)
-        images = self.repository.get_product_images(product_id)
+        context = self.repository.get_product_full_context(product)
+        if not context:
+            return {
+                "intent": "product_info",
+                "message": "Mình tìm thấy tên cây nhưng chưa tải được dữ liệu sản phẩm chi tiết. Bạn thử lại sau nhé.",
+                "products": [],
+                "sources": [],
+                "metadata": {"route": route.model_dump()},
+            }
 
         prompt = PRODUCT_INFO_PROMPT.format(
             message=message,
-            product_json=json.dumps(product, ensure_ascii=False, default=str),
-            variants_json=json.dumps(variants, ensure_ascii=False, default=str),
-            images_json=json.dumps(images, ensure_ascii=False, default=str),
+            product_json=json.dumps(context, ensure_ascii=False, default=str),
+            variants_json=json.dumps(context.get("variants") or [], ensure_ascii=False, default=str),
+            images_json=json.dumps(context.get("images") or [], ensure_ascii=False, default=str),
         )
 
         answer = None
@@ -49,56 +55,92 @@ class ProductInfoHandler:
             except Exception:
                 answer = None
         if not answer:
-            answer = build_product_answer(product, variants)
+            answer = build_product_answer(context)
 
         return {
             "intent": "product_info",
             "message": answer,
-            "products": [build_product_card(product, variants, images)],
+            "products": [build_product_card(context)],
             "sources": [],
             "metadata": {"route": route.model_dump(), "llm_used": llm_used},
         }
 
 
-def build_product_answer(product: dict[str, Any], variants: list[dict[str, Any]]) -> str:
+def build_product_answer(context: dict[str, Any]) -> str:
+    product = context.get("product") or {}
+    plant = context.get("plant") or {}
+    variants = context.get("variants") or []
+    computed = context.get("computed") or {}
+
     name = product.get("name") or "Sản phẩm này"
-    price = format_price_range(product, variants)
-    stock = sum(int(variant.get("stock") or 0) for variant in variants)
-    lines = [f"{name} hiện có giá {price}."]
+    lines = [f"{name} hiện có giá {computed.get('price_text') or 'chưa có dữ liệu giá'}."]
+
     if variants:
-        sizes = ", ".join(str(variant.get("size") or variant.get("sku") or "variant") for variant in variants[:5])
-        lines.append(f"Các lựa chọn hiện có: {sizes}.")
-        lines.append(f"Tổng tồn kho theo biến thể: {stock}.")
+        variant_names = ", ".join(str(variant.get("variant_name") or variant.get("variant_sku") or "biến thể") for variant in variants[:5])
+        lines.append(f"Các lựa chọn hiện có: {variant_names}.")
     else:
-        lines.append("Hiện chưa có dữ liệu biến thể/tồn kho cho sản phẩm này.")
-    if "pet_safe" in product:
-        lines.append("Sản phẩm này an toàn cho thú cưng." if product.get("pet_safe") else "Sản phẩm này không được đánh dấu là an toàn cho thú cưng.")
+        lines.append("Hiện chưa có dữ liệu biến thể cho sản phẩm này.")
+
+    if computed.get("has_inventory"):
+        available_qty = int(computed.get("available_qty") or 0)
+        lines.append(f"Tổng tồn kho có thể bán: {available_qty}.")
+    else:
+        lines.append("Hiện chưa có dữ liệu tồn kho cho sản phẩm này.")
+
+    toxicity_warning = plant.get("toxicity_warning")
+    safety_notes = plant.get("safety_notes")
+    if toxicity_warning or safety_notes:
+        lines.append(f"Lưu ý an toàn: {toxicity_warning or safety_notes}.")
+
     return " ".join(lines)
 
 
-def build_product_card(product: dict[str, Any], variants: list[dict[str, Any]], images: list[dict[str, Any]]) -> dict[str, Any]:
+def build_product_card(context: dict[str, Any]) -> dict[str, Any]:
+    product = context.get("product") or {}
+    category = context.get("category") or {}
+    plant = context.get("plant") or {}
+    computed = context.get("computed") or {}
     return {
         "id": product.get("_id"),
         "name": product.get("name"),
         "slug": product.get("slug"),
-        "price": format_price_range(product, variants),
-        "price_min": product.get("price_min"),
-        "price_max": product.get("price_max"),
-        "variants": variants,
-        "images": images,
+        "sku": product.get("sku"),
+        "category": {"name": category.get("name"), "slug": category.get("slug")} if category else None,
+        "plant": {
+            "scientific_name": plant.get("scientific_name"),
+            "common_name": plant.get("common_name"),
+            "toxicity_warning": plant.get("toxicity_warning"),
+            "safety_notes": plant.get("safety_notes"),
+        }
+        if plant
+        else None,
+        "price": computed.get("price_text"),
+        "price_min": computed.get("price_min"),
+        "price_max": computed.get("price_max"),
+        "available_qty": computed.get("available_qty"),
+        "in_stock": computed.get("in_stock"),
+        "primary_image_url": computed.get("primary_image_url"),
+        "variants": context.get("variants") or [],
+        "images": context.get("images") or [],
     }
 
 
-def format_price_range(product: dict[str, Any], variants: list[dict[str, Any]] | None = None) -> str:
-    variants = variants or []
-    prices = [int(item["price"]) for item in variants if item.get("price") is not None]
-    if prices:
-        min_price, max_price = min(prices), max(prices)
-    else:
-        min_price = product.get("price_min")
-        max_price = product.get("price_max") or product.get("price_min")
-    if min_price is None:
+def format_price_range(product_or_context: dict[str, Any], variants: list[dict[str, Any]] | None = None) -> str:
+    computed = product_or_context.get("computed") or {}
+    if computed.get("price_text"):
+        return computed["price_text"]
+
+    variants = variants or product_or_context.get("variants") or []
+    prices = [float(item["price"]) for item in variants if item.get("price") is not None]
+    if not prices:
         return "chưa có dữ liệu giá"
-    if max_price is None or int(min_price) == int(max_price):
-        return f"{int(min_price):,}đ".replace(",", ".")
-    return f"{int(min_price):,}đ - {int(max_price):,}đ".replace(",", ".")
+    min_price, max_price = min(prices), max(prices)
+    if float(min_price) == float(max_price):
+        return format_number(min_price)
+    return f"{format_number(min_price)} - {format_number(max_price)}"
+
+
+def format_number(value: float) -> str:
+    if float(value).is_integer():
+        return f"{int(value):,}".replace(",", ".")
+    return f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")

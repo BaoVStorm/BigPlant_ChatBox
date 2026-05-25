@@ -32,8 +32,11 @@ class Settings(BaseSettings):
     knowledge_embedding_field: str = Field(default="embedding", alias="KNOWLEDGE_EMBEDDING_FIELD")
 
     products_collection: str = Field(default="products", alias="PRODUCTS_COLLECTION")
+    product_categories_collection: str = Field(default="product_categories", alias="PRODUCT_CATEGORIES_COLLECTION")
     product_variants_collection: str = Field(default="product_variants", alias="PRODUCT_VARIANTS_COLLECTION")
     product_images_collection: str = Field(default="product_images", alias="PRODUCT_IMAGES_COLLECTION")
+    variant_inventory_collection: str = Field(default="variant_inventory", alias="VARIANT_INVENTORY_COLLECTION")
+    plants_collection: str = Field(default="plants", alias="PLANTS_COLLECTION")
     knowledge_articles_collection: str = Field(default="plant_knowledge_articles", alias="KNOWLEDGE_ARTICLES_COLLECTION")
     knowledge_chunks_collection: str = Field(default="knowledge_chunks", alias="KNOWLEDGE_CHUNKS_COLLECTION")
 
