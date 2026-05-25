@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_prompt_format: str = Field(default="auto", alias="LLM_PROMPT_FORMAT")
 
+    catalog_price_currency: str = Field(default="USD", alias="CATALOG_PRICE_CURRENCY")
+    vnd_per_usd: float = Field(default=25000.0, alias="VND_PER_USD")
+
     embedding_model_name: str = Field(default="./models/embeddings/bge-m3", alias="EMBEDDING_MODEL_NAME")
     embedding_device: str = Field(default="cuda", alias="EMBEDDING_DEVICE")
 

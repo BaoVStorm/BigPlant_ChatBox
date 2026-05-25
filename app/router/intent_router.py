@@ -4,6 +4,7 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from app.config import get_settings
 from app.embeddings.embedding_service import EmbeddingService, get_embedding_service
 from app.llm.local_llm import LocalLLM
 from app.llm.prompts import ROUTER_PROMPT
@@ -371,9 +372,9 @@ def extract_entities(text: str, original: str) -> dict[str, Any]:
     if product_name:
         entities["product_name"] = product_name
 
-    max_price = extract_max_price(text)
-    if max_price:
-        entities["max_price"] = max_price
+    budget = extract_budget(text)
+    if budget:
+        entities.update(budget)
 
     if contains_any(text, ["de cham", "de song", "nguoi moi", "moi choi", "it cham"]):
         entities["care_level"] = "easy"
@@ -452,19 +453,60 @@ def mentions_pet(original: str, normalized: str) -> bool:
     return any(re.search(pattern, original_lower) or re.search(pattern, normalized) for pattern in pet_dog_patterns)
 
 
-def extract_max_price(text: str) -> int | None:
-    match = re.search(r"(?:duoi|nho hon|toi da|<=|tam|khoang)\s*(\d+(?:[.,]\d+)?)\s*(k|nghin|ngan|trieu|m)?", text)
-    if not match:
-        return None
-    amount = float(match.group(1).replace(",", "."))
-    unit = match.group(2) or ""
-    if unit in {"k", "nghin", "ngan"}:
-        amount *= 1000
-    elif unit in {"trieu", "m"}:
-        amount *= 1_000_000
-    elif amount < 1000:
-        amount *= 1000
-    return int(amount)
+def extract_budget(text: str) -> dict[str, Any] | None:
+    settings = get_settings()
+
+    prefixed_usd = re.search(r"(?:duoi|nho hon|toi da|<=|tam|khoang)?\s*\$\s*(\d+(?:[.,]\d+)?)", text)
+    if prefixed_usd:
+        original_amount = float(prefixed_usd.group(1).replace(",", "."))
+        normalized_amount = convert_amount_to_catalog(original_amount, "USD", settings.catalog_price_currency, settings.vnd_per_usd)
+        return build_budget_entities(original_amount, "USD", normalized_amount, settings.catalog_price_currency)
+
+    usd_match = re.search(r"(?:duoi|nho hon|toi da|<=|tam|khoang)?\s*(\d+(?:[.,]\d+)?)\s*(usd|dollar|dollars|do la|do-la)", text)
+    if usd_match:
+        original_amount = float(usd_match.group(1).replace(",", "."))
+        normalized_amount = convert_amount_to_catalog(original_amount, "USD", settings.catalog_price_currency, settings.vnd_per_usd)
+        return build_budget_entities(original_amount, "USD", normalized_amount, settings.catalog_price_currency)
+
+    vnd_match = re.search(r"(?:duoi|nho hon|toi da|<=|tam|khoang)?\s*(\d+(?:[.,]\d+)?)\s*(k|nghin|ngan|trieu|m|vnd|dong|đ|d)\b", text)
+    if vnd_match:
+        original_amount = float(vnd_match.group(1).replace(",", "."))
+        unit = vnd_match.group(2)
+        if unit in {"k", "nghin", "ngan"}:
+            original_amount *= 1000
+        elif unit in {"trieu", "m"}:
+            original_amount *= 1_000_000
+        normalized_amount = convert_amount_to_catalog(original_amount, "VND", settings.catalog_price_currency, settings.vnd_per_usd)
+        return build_budget_entities(original_amount, "VND", normalized_amount, settings.catalog_price_currency)
+
+    plain_match = re.search(r"(?:duoi|nho hon|toi da|<=|tam|khoang)\s*(\d+(?:[.,]\d+)?)\b", text)
+    if plain_match:
+        original_amount = float(plain_match.group(1).replace(",", "."))
+        currency = settings.catalog_price_currency.upper()
+        return build_budget_entities(original_amount, currency, original_amount, currency)
+
+    return None
+
+
+def build_budget_entities(original_amount: float, input_currency: str, normalized_amount: float, catalog_currency: str) -> dict[str, Any]:
+    return {
+        "max_price": round(normalized_amount, 4),
+        "budget_input_currency": input_currency,
+        "budget_input_amount": round(original_amount, 4),
+        "budget_catalog_currency": catalog_currency.upper(),
+    }
+
+
+def convert_amount_to_catalog(amount: float, input_currency: str, catalog_currency: str, vnd_per_usd: float) -> float:
+    input_currency = input_currency.upper()
+    catalog_currency = catalog_currency.upper()
+    if input_currency == catalog_currency:
+        return amount
+    if input_currency == "VND" and catalog_currency == "USD":
+        return amount / vnd_per_usd
+    if input_currency == "USD" and catalog_currency == "VND":
+        return amount * vnd_per_usd
+    return amount
 
 
 def contains_any(text: str, markers: list[str]) -> bool:

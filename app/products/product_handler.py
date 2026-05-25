@@ -124,6 +124,13 @@ def format_price_range(product_or_context: dict[str, Any], variants: list[dict[s
 
 
 def format_number(value: float) -> str:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.catalog_price_currency.upper() == "USD":
+        return f"{float(value):.2f} USD"
     if float(value).is_integer():
-        return f"{int(value):,}".replace(",", ".")
-    return f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+        number = f"{int(value):,}".replace(",", ".")
+    else:
+        number = f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"{number} VND"

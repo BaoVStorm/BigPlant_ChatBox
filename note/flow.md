@@ -170,6 +170,9 @@ Router extract một số entity trước cả khi quyết định intent:
 ```txt
 product_name
 max_price
+budget_input_currency
+budget_input_amount
+budget_catalog_currency
 care_level
 watering_need
 light_requirement
@@ -185,7 +188,9 @@ product_name:
   - hoặc pattern "giá <name>"
 
 max_price:
-  - parse các mẫu như dưới 300k, khoảng 500k, 1 triệu
+  - parse ngân sách từ VND hoặc USD
+  - ví dụ: dưới 300k, 1 triệu, 20 USD, $15
+  - convert về đơn vị của catalog price trước khi filter
 
 care_level:
   - gắn "easy" nếu có các từ như dễ chăm, người mới, ít chăm
@@ -695,6 +700,7 @@ Recommendation hiện chỉ hard filter trên các field có thật:
 ```txt
 care_level  → products.care_level
 max_price   → computed.price_min, thực chất lấy từ product_variants.price
+             nhưng budget trước đó đã được normalize về cùng currency với catalog price
 in_stock    → computed.in_stock, thực chất lấy từ variant_inventory.available_qty
 ```
 
@@ -770,8 +776,11 @@ Lưu ý quan trọng về dữ liệu thực tế:
 
 ```txt
 DB hiện đang có giá kiểu 16.8, 39.9, 11.6 ...
-Trong khi parser max_price kiểu "300k" → 300000.
-Vì vậy gần như mọi sản phẩm hiện tại đều pass điều kiện ngân sách này.
+Vì vậy hệ thống cần normalize ngân sách theo currency.
+Ví dụ nếu catalog price là USD:
+  400K VND → khoảng 16 USD
+  $20      → 20 USD
+Khi đó hai câu hỏi sẽ không còn cho ra cùng một tập kết quả.
 ```
 
 ## 11. Plant Care flow hiện tại

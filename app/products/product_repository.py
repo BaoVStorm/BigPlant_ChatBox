@@ -390,9 +390,15 @@ def format_price_range_values(price_min: float | None, price_max: float | None) 
 
 
 def format_price_number(value: float) -> str:
+    settings = get_settings()
+    currency = settings.catalog_price_currency.upper()
+    if currency == "USD":
+        return f"{float(value):.2f} USD"
     if float(value).is_integer():
-        return f"{int(value):,}".replace(",", ".")
-    return f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+        number = f"{int(value):,}".replace(",", ".")
+    else:
+        number = f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"{number} VND"
 
 
 def normalize_text(value: Any) -> str:
