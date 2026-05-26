@@ -3,6 +3,8 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
+from app.chat.context_service import ChatContextService
+from app.chat.follow_up import build_follow_up
 from app.knowledge.rag_handler import PlantCareRagHandler
 from app.llm.local_llm import LocalLLM
 from app.llm.prompts import GENERAL_PROMPT
@@ -20,6 +22,7 @@ class ChatService:
         self.llm = LocalLLM()
         self.router = IntentRouter(self.llm)
         self.product_repository = ProductRepository()
+        self.context_service = ChatContextService()
         self.plant_detect_service = PlantDetectService(repository=self.product_repository)
         self.product_handler = ProductInfoHandler(self.product_repository, self.llm)
         self.recommendation_handler = RecommendationHandler(repository=self.product_repository, llm=self.llm)
@@ -33,16 +36,19 @@ class ChatService:
         image: ChatImageInput | None = None,
     ) -> dict[str, Any]:
         started_at = perf_counter()
+        session = self.context_service.ensure_session(user_id, session_id)
+        resolved_session_id = str(session.get("_id"))
+        memory = self.context_service.load_memory(session)
         image_context = self._resolve_image_context(image)
 
         route_started_at = perf_counter()
         route = self.router.classify(message)
-        route = self._augment_route_with_image(route, image_context, message)
+        route = self._augment_route_with_context(route, image_context, memory, message)
         route_ms = elapsed_ms(route_started_at)
 
         handler_started_at = perf_counter()
         if route.intent == "product_info":
-            result = self.product_handler.handle(message, route, image_context=image_context)
+            result = self.product_handler.handle(message, route, image_context=image_context, memory=memory)
         elif route.intent == "recommendation":
             result = self.recommendation_handler.handle(message, route)
         elif route.intent == "plant_care":
@@ -61,8 +67,12 @@ class ChatService:
             }
 
         handler_ms = elapsed_ms(handler_started_at)
+        follow_up_message, suggested_questions = build_follow_up(result.get("intent", route.intent), result, memory)
+        result["follow_up_message"] = follow_up_message
+        result["suggested_questions"] = suggested_questions
+        result["session_id"] = resolved_session_id
         result.setdefault("metadata", {})["user_id"] = user_id
-        result["metadata"]["session_id"] = session_id
+        result["metadata"]["session_id"] = resolved_session_id
         if image_context:
             result["metadata"]["image_detection"] = image_context.model_dump()
         result["metadata"]["timing_ms"] = {
@@ -70,6 +80,7 @@ class ChatService:
             "handler": handler_ms,
             "total": elapsed_ms(started_at),
         }
+        self.context_service.persist_turn(resolved_session_id, user_id, message, result, image_context=image_context)
         return result
 
     def _resolve_image_context(self, image: ChatImageInput | None) -> ImagePlantContext | None:
@@ -77,11 +88,30 @@ class ChatService:
             return None
         return self.plant_detect_service.resolve_image_context(image)
 
-    def _augment_route_with_image(self, route: IntentRoute, image_context: ImagePlantContext | None, message: str) -> IntentRoute:
+    def _augment_route_with_context(
+        self,
+        route: IntentRoute,
+        image_context: ImagePlantContext | None,
+        memory: dict[str, Any],
+        message: str,
+    ) -> IntentRoute:
+        entities = dict(route.entities)
+
+        if memory and not entities.get("product_name"):
+            active_subject = memory.get("active_subject") or {}
+            if active_subject.get("subject_type") == "product" and route.intent in {"product_info", "plant_care", "unclear"}:
+                entities["product_name"] = active_subject.get("product_name")
+                entities["context_subject"] = True
+
+            if active_subject.get("subject_type") == "product" and route.intent == "general" and should_reinterpret_general_as_image_product_info(message):
+                entities["product_name"] = active_subject.get("product_name")
+                entities["context_subject"] = True
+                return IntentRoute(intent="product_info", confidence=0.64, entities=entities, source="session_context_fallback")
+
         if not image_context:
+            route.entities = entities
             return route
 
-        entities = dict(route.entities)
         if image_context.resolved_name and not entities.get("product_name"):
             entities["product_name"] = image_context.resolved_name
         entities["image_provided"] = True
@@ -89,6 +119,9 @@ class ChatService:
             entities["detected_label"] = image_context.detection.label
         if image_context.detection.confidence is not None:
             entities["detected_confidence"] = image_context.detection.confidence
+
+        if not (message or "").strip() and image_context.resolved_product_context:
+            return IntentRoute(intent="product_info", confidence=0.8, entities=entities, source="image_context_fallback")
 
         if route.intent == "unclear" and image_context.resolved_product_context:
             return IntentRoute(intent="product_info", confidence=0.7, entities=entities, source="image_context_fallback")

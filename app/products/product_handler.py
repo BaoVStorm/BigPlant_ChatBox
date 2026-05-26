@@ -16,9 +16,19 @@ class ProductInfoHandler:
         self.repository = repository or ProductRepository()
         self.llm = llm or LocalLLM()
 
-    def handle(self, message: str, route: IntentRoute, image_context: ImagePlantContext | None = None) -> dict[str, Any]:
+    def handle(
+        self,
+        message: str,
+        route: IntentRoute,
+        image_context: ImagePlantContext | None = None,
+        memory: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         product_name = str(route.entities.get("product_name") or "").strip()
         context = image_context.resolved_product_context if image_context and image_context.resolved_product_context else None
+
+        if not context and memory and (active_subject := memory.get("active_subject")):
+            if active_subject.get("subject_type") == "product" and active_subject.get("product_id"):
+                context = self.repository.get_product_full_context(active_subject.get("product_id"))
 
         product = self.repository.get_product_by_name(product_name) if product_name and not context else None
         if not product and not context:
@@ -44,6 +54,7 @@ class ProductInfoHandler:
                 "metadata": {"route": route.model_dump()},
             }
 
+        focus = detect_product_question_focus(message, route.entities)
         answer = build_product_answer(context, message, route.entities)
         llm_used = False
 
@@ -56,6 +67,8 @@ class ProductInfoHandler:
                 "route": route.model_dump(),
                 "llm_used": llm_used,
                 "image_assisted": bool(image_context and image_context.resolved_product_context),
+                "product_focus": focus,
+                "context_assisted": bool(memory and memory.get("active_subject") and not image_context),
             },
         }
 
