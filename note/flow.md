@@ -1,740 +1,110 @@
-# BigPlant App Flow
+# BigPlant AI System Flow
 
-File này mô tả **flow thực thi thật của source code hiện tại**. Mục tiêu là giải thích rõ: khi user hỏi một câu, hệ thống sẽ đi qua những bước nào, router nhận diện intent ra sao, mỗi intent xử lý như thế nào, query collection nào, và model nào được dùng ở từng bước.
+Tài liệu này mô tả **cách hệ thống AI của app đang thực sự vận hành**. Mục tiêu là giải thích rõ:
 
-Nội dung ở đây chỉ tập trung vào **logic của app hiện tại**.
+- Khi người dùng hỏi một câu thì hệ thống làm gì trước, làm gì sau.
+- Hệ thống chia câu hỏi thành bao nhiêu nhóm.
+- Mỗi nhóm được nhận diện như thế nào.
+- Sau khi nhận diện được nhóm, hệ thống lấy dữ liệu và tạo câu trả lời ra sao.
+- Model nào được dùng ở từng giai đoạn.
 
-## 1. Mục tiêu của flow
+Tài liệu này chỉ tập trung vào **logic xử lý của app**, không đi sâu vào code hay tên hàm.
 
-App không dùng một prompt LLM duy nhất cho tất cả câu hỏi. Thay vào đó, app làm theo logic sau:
+---
+
+## 1. Tư tưởng thiết kế của hệ thống
+
+Hệ thống không xem mọi câu hỏi đều là một bài toán của LLM.
+
+Thay vào đó, app đi theo hướng:
 
 ```txt
-1. Nhận câu hỏi của user
-2. Router xác định intent
-3. Mỗi intent đi vào một nhánh xử lý riêng
-4. MongoDB là nguồn dữ liệu thật cho giá, tồn kho, ảnh, độc tính
-5. LLM chỉ dùng ở những nơi phù hợp
+1. Xác định người dùng đang hỏi loại gì.
+2. Chuyển câu hỏi sang đúng nhánh xử lý.
+3. Lấy dữ liệu thật từ MongoDB nếu câu hỏi cần dữ liệu sản phẩm.
+4. Chỉ dùng LLM ở những chỗ cần hiểu ngữ nghĩa hoặc cần diễn giải.
 ```
 
 Ý nghĩa của cách làm này:
 
 ```txt
-- giảm hallucination
-- tăng tốc độ ở các câu factual
-- dễ kiểm soát hơn
-- dễ debug hơn
-- dễ mở rộng theo từng flow nghiệp vụ
-```
-
-## 2. Entry point của app
-
-API chính của chatbot:
-
-```txt
-POST /api/chat/message
-```
-
-File route:
-
-```txt
-app/chat/chat_router.py
-```
-
-Payload đầu vào:
-
-```txt
-message
-user_id
-session_id
-```
-
-Response đầu ra:
-
-```txt
-intent
-message
-products
-sources
-metadata
-```
-
-## 3. Luồng tổng quát khi user hỏi một câu
-
-Khi user gửi một câu hỏi, luồng chạy như sau:
-
-```txt
-User question
-→ FastAPI route nhận request
-→ ChatService singleton xử lý
-→ IntentRouter classify câu hỏi
-→ ChatService chọn handler theo intent
-→ Handler query MongoDB hoặc dùng LLM tùy flow
-→ Build response JSON
-→ Trả về cho user
-```
-
-Trong code, file điều phối chính là:
-
-```txt
-app/chat/chat_service.py
-```
-
-`ChatService.handle_message(...)` làm 4 việc lớn:
-
-```txt
-1. đo thời gian xử lý
-2. gọi router để phân loại intent
-3. dispatch sang handler tương ứng
-4. gắn metadata.timing_ms vào response
-```
-
-## 4. Các thành phần chính trong source code
-
-```txt
-app/chat/chat_router.py
-  → endpoint /api/chat/message
-
-app/chat/chat_service.py
-  → điều phối flow theo intent
-
-app/router/intent_router.py
-  → nhận diện intent + extract entities
-
-app/products/product_repository.py
-  → query MongoDB, join dữ liệu product/category/plant/variant/inventory/image
-
-app/products/product_handler.py
-  → xử lý Product Info
-
-app/recommendations/recommendation_handler.py
-  → xử lý Recommendation
-
-app/knowledge/rag_handler.py
-  → xử lý Plant Care / RAG
-
-app/llm/local_llm.py
-  → load local LLM, generate text, generate JSON
-
-app/embeddings/embedding_service.py
-  → load local embedding model, embed query/example/product
-```
-
-## 5. Router hoạt động như thế nào
-
-File:
-
-```txt
-app/router/intent_router.py
-```
-
-Router hiện tại được thiết kế theo **3 tầng**:
-
-```txt
-Tầng 1: weighted rules
-Tầng 2: semantic intent examples
-Tầng 3: local LLM fallback only when uncertain
-```
-
-Đây là phần quan trọng nhất của flow.
-
----
-
-## 6. Trước khi classify: normalize + extract entities
-
-### 6.1. Normalize text
-
-Trước khi chấm intent, router normalize câu hỏi:
-
-```txt
-1. lower-case
-2. bỏ dấu tiếng Việt
-3. co khoảng trắng
-```
-
-Ví dụ:
-
-```txt
-"Cây có độc với mèo không?"
-→ "cay co doc voi meo khong?"
-```
-
-Mục đích:
-
-```txt
-- giúp rule ổn định hơn
-- giảm phụ thuộc vào dấu tiếng Việt
-- giúp cùng một marker match được nhiều cách gõ
-```
-
-### 6.2. Extract entities trước khi xác định intent
-
-Router không chỉ đo intent, mà còn rút ra entity để dùng cho handler sau này.
-
-Entity hiện đang extract:
-
-```txt
-product_name
-max_price
-budget_input_currency
-budget_input_amount
-budget_catalog_currency
-care_level
-watering_need
-light_requirement
-placement
-pet_safe
-```
-
-Ý nghĩa từng entity:
-
-```txt
-product_name
-  → tên cây/sản phẩm cụ thể nếu câu hỏi có nhắc
-
-max_price
-  → ngân sách đã normalize về cùng đơn vị với catalog price
-
-budget_input_currency
-  → tiền tệ user nhập vào, ví dụ VND hoặc USD
-
-budget_input_amount
-  → số tiền gốc user nói
-
-budget_catalog_currency
-  → currency mà hệ thống đang dùng để so với product price
-
-care_level
-  → ví dụ easy khi có các cụm như dễ chăm, người mới, ít chăm
-
-watering_need
-  → ví dụ low khi có các cụm như hay quên tưới, ít tưới
-
-light_requirement
-  → ví dụ low nếu có cụm ít nắng, thiếu sáng
-
-placement
-  → desk / office / bedroom / living_room nếu câu có nhắc không gian đặt cây
-
-pet_safe
-  → gắn true nếu câu liên quan mèo/chó/thú cưng
-```
-
-### 6.3. Parse ngân sách theo currency
-
-Router hiện có logic parse ngân sách từ nhiều dạng khác nhau:
-
-```txt
-dưới 300k
-dưới 1 triệu
-$20
-20 USD
-```
-
-Sau khi parse, router convert về currency mà catalog đang dùng.
-
-Ví dụ nếu catalog đang dùng USD:
-
-```txt
-400K VND → khoảng 16 USD
-$20      → 20 USD
-```
-
-Mục tiêu:
-
-```txt
-tránh việc 400K và $20 bị hiểu như cùng một mức giá
+- giảm việc model tự bịa
+- tăng độ đúng cho giá/tồn kho/độc tính
+- giúp app nhanh hơn ở các câu factual
+- giúp giải thích flow hệ thống rõ ràng hơn
 ```
 
 ---
 
-## 7. Tầng 1: weighted rules
+## 2. Một câu hỏi đi vào hệ thống như thế nào
 
-Đây là tầng đầu tiên của router.
-
-### 7.1. Mục tiêu của tầng rules
-
-Tầng này dùng để bắt nhanh những câu hỏi có ý định rất rõ.
-
-Ví dụ:
+Khi người dùng gửi một câu hỏi, app xử lý theo chuỗi sau:
 
 ```txt
-"thêm vào giỏ"
-"bao nhiêu tiền"
-"còn hàng không"
-"tư vấn cây dễ chăm"
-"tại sao lá cây bị vàng"
+Người dùng gửi câu hỏi
+→ API nhận request
+→ Bộ điều phối chat nhận message
+→ Bộ router phân loại intent
+→ Hệ thống chọn nhánh xử lý tương ứng
+→ Nhánh đó query MongoDB hoặc gọi vector search / LLM tùy trường hợp
+→ Tạo response cuối cùng
+→ Trả về cho người dùng
 ```
 
-### 7.2. Cách hoạt động
-
-Mỗi intent có một tập pattern + trọng số.
-
-Ví dụ ý tưởng:
+Nói ngắn gọn, app có 3 lớp tư duy chính:
 
 ```txt
-cart_order:
-  "them vao gio"  → điểm cao
-  "mua ngay"      → điểm cao
-
-product_info:
-  "bao nhieu tien" → điểm cao
-  "con hang"       → điểm cao
-  "co doc"         → điểm cao
-
-recommendation:
-  "tu van"         → điểm cao
-  "goi y"          → điểm cao
-  "de ban"         → điểm vừa
-
-plant_care:
-  "vang la"        → điểm cao
-  "ung re"         → điểm cao
-
-general:
-  "xin chao"       → điểm cao
-  "cam on"         → điểm cao
-```
-
-Sau khi match rules:
-
-```txt
-1. tính tổng điểm từng intent
-2. lấy intent có điểm cao nhất
-3. so sánh với intent đứng thứ hai
-4. nếu score đủ mạnh và margin đủ xa thì return luôn
-5. nếu chưa đủ chắc thì chuyển sang semantic layer
-```
-
-### 7.3. Tầng này để làm gì
-
-```txt
-- nhanh
-- rẻ
-- không cần gọi embedding/LLM nếu câu quá rõ
-- đặc biệt tốt cho cart, product info cơ bản, greeting
-```
-
-### 7.4. Khi nào rules kết thúc flow router
-
-Rules sẽ chốt luôn nếu:
-
-```txt
-best_score đủ cao
-AND
-best_score cách xa second_score đủ lớn
-```
-
-Nếu không đạt điều kiện này, router chưa tin hoàn toàn, nên sẽ sang semantic layer.
-
----
-
-## 8. Tầng 2: semantic intent examples
-
-Đây là tầng giúp app hiểu các câu **gần nghĩa**, không cần trùng đúng marker.
-
-### 8.1. Mục tiêu của semantic layer
-
-Giải quyết vấn đề mà rules không làm tốt:
-
-```txt
-user không gõ đúng marker
-user paraphrase câu hỏi
-user dùng cách nói tự nhiên hơn
-```
-
-Ví dụ:
-
-```txt
-"shop còn mẫu này không"
-"mình cần cây cho góc làm việc"
-"lá cây bị úng thì cứu sao"
-"alo bạn ơi"
-```
-
-### 8.2. Cách hoạt động
-
-Router có một tập câu mẫu cho từng intent.
-
-Ví dụ:
-
-```txt
-product_info:
-  Cây monstera bao nhiêu tiền
-  Cây này còn hàng không
-  Shop còn mẫu này không
-
-recommendation:
-  Tôi muốn cây dễ chăm cho người mới
-  Phòng tôi ít nắng nên chọn cây gì
-  Mình muốn tìm một cây tặng sinh nhật
-
-plant_care:
-  Tại sao lá cây bị vàng
-  Cây bị úng rễ xử lý sao
-
-cart_order:
-  Thêm cây này vào giỏ hàng
-  Mua ngay sản phẩm này
-
-general:
-  Xin chào
-  Alo bạn ơi
-```
-
-Flow semantic:
-
-```txt
-1. embed câu user bằng embedding model
-2. embed toàn bộ câu mẫu intent
-3. tính similarity giữa câu user và từng câu mẫu
-4. lấy similarity cao nhất cho mỗi intent
-5. cộng nhẹ rule score vào semantic score nếu có
-6. chọn intent có điểm semantic tốt nhất
-7. nếu score đủ cao và margin đủ ổn thì return
-8. nếu vẫn chưa chắc thì mới sang LLM fallback
-```
-
-### 8.3. Tầng này để làm gì
-
-```txt
-- bắt câu gần nghĩa tốt hơn rules
-- không cần user gõ đúng marker
-- giảm số lần phải gọi local LLM
-- tăng độ chính xác cho tiếng Việt tự nhiên
-```
-
-### 8.4. Embedding model nào đang dùng ở tầng này
-
-Model embedding hiện tại:
-
-```txt
-BAAI/bge-m3
-```
-
-Và được load bởi:
-
-```txt
-app/embeddings/embedding_service.py
-```
-
-Embedding model này hiện được dùng ở 3 chỗ trong app:
-
-```txt
-1. semantic intent router
-2. product recommendation vector search
-3. plant care / RAG vector search
+Lớp 1: Nhận diện người dùng đang muốn gì
+Lớp 2: Lấy dữ liệu thật tương ứng với ý định đó
+Lớp 3: Trả lời bằng format phù hợp
 ```
 
 ---
 
-## 9. Tầng 3: local LLM fallback
+## 3. Các nhóm câu hỏi mà hệ thống đang hỗ trợ
 
-Đây là tầng cuối cùng của router.
-
-### 9.1. Khi nào mới dùng tầng này
-
-Chỉ dùng nếu:
+Hiện tại app chia câu hỏi thành 6 nhóm:
 
 ```txt
-rules chưa đủ chắc
-AND semantic chưa đủ chắc
-AND local LLM available
+1. product_info
+2. recommendation
+3. plant_care
+4. cart_order
+5. general
+6. unclear
 ```
 
-Tức là local LLM **không** bị gọi ở mọi request.
+Ý nghĩa từng nhóm:
 
-### 9.2. Cách hoạt động
+### product_info
 
-Router build prompt JSON classifier:
-
-```txt
-Bạn là intent router...
-Hãy phân loại câu hỏi vào product_info / recommendation / plant_care / cart_order / general / unclear
-Chỉ trả JSON
-```
-
-Sau đó parse JSON từ model.
-
-### 9.3. Tầng này để làm gì
-
-```txt
-- xử lý câu quá mơ hồ
-- xử lý trường hợp rules và semantic không đủ tự tin
-- giữ app linh hoạt mà không phải gọi LLM cho mọi câu
-```
-
----
-
-## 10. Tóm tắt logic quyết định intent
-
-Một câu hỏi đi qua router như sau:
-
-```txt
-Input user message
-→ normalize
-→ extract entities
-→ weighted rules scoring
-→ nếu rules đủ mạnh: return intent
-→ nếu chưa đủ: semantic examples scoring
-→ nếu semantic đủ mạnh: return intent
-→ nếu vẫn chưa đủ: local LLM fallback
-→ nếu LLM fail: fallback về semantic hoặc rules tốt nhất hiện có
-```
-
-Đây là flow nhận diện intent hiện tại của app.
-
-## 11. Các intent hiện có và từng intent làm gì
-
-App hiện có 6 intent:
-
-```txt
-product_info
-recommendation
-plant_care
-cart_order
-general
-unclear
-```
-
----
-
-## 12. Intent: product_info
-
-### 12.1. Dùng khi nào
-
-Intent này dùng khi user hỏi về **một sản phẩm cây cụ thể**.
+Người dùng đang hỏi về **một sản phẩm cây cụ thể**.
 
 Ví dụ:
 
 ```txt
 Cây Aloe vera bao nhiêu tiền?
 Cây này còn hàng không?
-Cho mình xem thông tin cây aloe vera
 Cây Jequirity bean có độc với mèo không?
+Cho mình xem thông tin cây này.
 ```
 
-### 12.2. Detect như thế nào
+### recommendation
 
-Rules bắt tốt các từ như:
-
-```txt
-bao nhieu tien
-gia
-con hang
-ton kho
-size
-hinh anh
-co doc
-an toan cho thu cung
-thong tin
-```
-
-Semantic layer giúp bắt các câu gần nghĩa như:
-
-```txt
-shop còn mẫu này không
-cho mình xem thông tin cây aloe vera
-```
-
-### 12.3. Flow xử lý sau khi detect được
-
-Handler:
-
-```txt
-app/products/product_handler.py
-```
-
-Flow chi tiết:
-
-```txt
-1. lấy product_name từ route.entities nếu có
-2. gọi ProductRepository.get_product_by_name(product_name)
-3. nếu chưa thấy thì gọi ProductRepository.find_product_mentioned(message)
-4. nếu vẫn chưa thấy thì trả câu hỏi yêu cầu user nêu tên cây cụ thể
-5. nếu thấy product thì gọi get_product_full_context(product)
-6. repository join dữ liệu thật:
-   - products
-   - product_categories
-   - plants
-   - product_variants
-   - variant_inventory
-   - product_images
-7. repository compute:
-   - price_min
-   - price_max
-   - price_text
-   - available_qty
-   - in_stock
-   - primary_image_url
-8. ProductInfoHandler build câu trả lời deterministic
-9. build product card
-10. trả response
-```
-
-### 12.4. Nguồn dữ liệu thật ở intent này
-
-```txt
-products                    → tên sản phẩm, slug, sku, mô tả, care_level
-product_variants            → giá thật, variant name, attributes
-variant_inventory           → tồn kho thật
-product_images              → ảnh
-plants                      → độc tính, safety notes, mô tả cây nền
-product_categories          → category Plants/Pots
-```
-
-### 12.5. Có dùng LLM không
-
-Hiện tại:
-
-```txt
-Không dùng LLM để trả lời product_info.
-```
-
-Lý do:
-
-```txt
-flow này cần factual correctness cao
-MongoDB đã đủ dữ liệu để build deterministic answer
-tránh chậm và tránh hallucination
-```
-
----
-
-## 13. Intent: recommendation
-
-### 13.1. Dùng khi nào
-
-Intent này dùng khi user muốn được tư vấn chọn cây theo nhu cầu.
+Người dùng không hỏi một sản phẩm cụ thể, mà muốn **được tư vấn chọn cây theo nhu cầu**.
 
 Ví dụ:
 
 ```txt
-Tôi muốn cây dễ chăm dưới 400K
-Mình cần cây cho góc làm việc
-Phòng tôi ít nắng nên chọn cây gì
-Tôi muốn cây làm quà tặng sinh nhật
+Tôi muốn cây dễ chăm dưới 400K.
+Mình cần cây cho góc làm việc.
+Tôi muốn cây hợp người mới chơi.
+Phòng ít nắng nên chọn cây gì?
 ```
 
-### 13.2. Detect như thế nào
+### plant_care
 
-Rules bắt các từ như:
-
-```txt
-tu van
-goi y
-nen mua
-nen chon
-chon cay
-phu hop
-de ban
-phong khach
-phong ngu
-van phong
-```
-
-Semantic layer bắt các câu gần nghĩa như:
-
-```txt
-mình cần cây cho góc làm việc
-mình muốn tìm một cây tặng sinh nhật
-```
-
-### 13.3. Flow xử lý sau khi detect được
-
-Handler:
-
-```txt
-app/recommendations/recommendation_handler.py
-```
-
-Flow chi tiết:
-
-```txt
-1. lấy filters từ route.entities
-2. bỏ product_name nếu router extract nhầm vào recommendation
-3. gọi ProductRepository.search_products(filters)
-4. repository filter theo dữ liệu có thật:
-   - is_active
-   - product_type='plant' hoặc category Plants
-   - care_level nếu có
-   - max_price sau khi normalize currency
-   - in_stock nếu có
-5. search_products hydrate full product context cho từng candidate
-6. nếu candidate ít hoặc query có tính semantic → bật vector search
-7. vector search lấy product id theo embedding
-8. hydrate lại vector result thành full product context
-9. merge hard-filter result + vector result
-10. rank candidates
-11. lấy top 3
-12. build deterministic answer
-13. build product cards
-14. trả response
-```
-
-### 13.4. Nguồn dữ liệu thật ở intent này
-
-```txt
-products
-product_categories
-product_variants
-variant_inventory
-product_images
-plants
-vector index trên products
-```
-
-### 13.5. Recommendation có dùng embedding không
-
-```txt
-Có.
-```
-
-Embedding được dùng khi query có yếu tố semantic hoặc hard filter chưa đủ.
-
-### 13.6. Recommendation có dùng LLM để trả lời không
-
-Hiện tại:
-
-```txt
-Không.
-```
-
-Handler đang build deterministic answer để giữ tốc độ và độ ổn định.
-
-### 13.7. Hard filter nào đang được áp dụng thật
-
-Hiện tại recommendation chỉ filter cứng trên các field có thật:
-
-```txt
-care_level  → products.care_level
-max_price   → computed.price_min, thực chất lấy từ product_variants.price
-in_stock    → computed.in_stock, thực chất lấy từ variant_inventory.available_qty
-```
-
-### 13.8. Semantic recommendation để làm gì
-
-Semantic/vector search được dùng cho các nhu cầu như:
-
-```txt
-để bàn
-ít nắng
-thiếu sáng
-phòng ngủ
-phòng khách
-quà tặng
-minimal
-chill
-```
-
-Vì DB hiện tại chưa có field cứng hoàn chỉnh cho các nhu cầu này.
-
----
-
-## 14. Intent: plant_care
-
-### 14.1. Dùng khi nào
-
-Intent này dùng cho câu hỏi kiến thức chăm cây.
+Người dùng hỏi về **kiến thức chăm cây** hoặc vấn đề sức khỏe của cây.
 
 Ví dụ:
 
@@ -744,157 +114,701 @@ Lá cây bị úng thì cứu sao?
 Cây tưới bao lâu một lần?
 ```
 
-### 14.2. Detect như thế nào
+### cart_order
 
-Rules bắt các từ như:
+Người dùng muốn **thêm giỏ hàng / mua / đặt hàng**.
+
+Ví dụ:
 
 ```txt
-vang la
-ung re
-thoi re
-heo la
-dom la
-sau benh
-tuoi bao lau
-cham soc
+Thêm cây này vào giỏ.
+Mua ngay sản phẩm này.
+Đặt hàng giúp mình.
 ```
 
-Semantic layer bắt các câu gần nghĩa như:
+### general
+
+Người dùng chỉ đang **chào hỏi hoặc hỏi chung chung**.
+
+Ví dụ:
+
+```txt
+Xin chào.
+Alo bạn ơi.
+Bạn có thể giúp gì cho BigPlant?
+```
+
+### unclear
+
+Câu hỏi quá mơ hồ, hệ thống chưa xác định được user muốn hỏi gì.
+
+Ví dụ:
+
+```txt
+Giúp mình với.
+Cái này ổn không?
+```
+
+---
+
+## 4. Hệ thống nhận diện intent như thế nào
+
+Đây là phần cốt lõi của app.
+
+Hệ thống dùng **3 tầng nhận diện**.
+
+```txt
+Tầng 1: weighted rules
+Tầng 2: semantic intent examples
+Tầng 3: local LLM fallback when uncertain
+```
+
+Ba tầng này có vai trò khác nhau.
+
+---
+
+## 5. Tầng 1: weighted rules
+
+### Mục đích
+
+Tầng này dùng để bắt những câu có ý định rõ ràng bằng luật nhanh.
+
+Ví dụ:
+
+```txt
+"bao nhiêu tiền"
+"còn hàng không"
+"thêm vào giỏ"
+"tại sao lá cây bị vàng"
+"xin chào"
+```
+
+### Nó hoạt động thế nào
+
+Hệ thống có một danh sách các cụm từ/cấu trúc thường gặp cho từng intent.
+
+Mỗi cụm từ được gán một trọng số.
+
+Ví dụ về tư duy chấm điểm:
+
+```txt
+Nếu câu có "thêm vào giỏ" → cart_order được cộng điểm rất cao
+Nếu câu có "bao nhiêu tiền" → product_info được cộng điểm cao
+Nếu câu có "dễ chăm" → recommendation được cộng điểm
+Nếu câu có "vàng lá" → plant_care được cộng điểm
+Nếu câu có "xin chào" → general được cộng điểm
+```
+
+Sau đó hệ thống:
+
+```txt
+1. tính tổng điểm cho từng intent
+2. xem intent nào cao nhất
+3. so với intent đứng thứ hai
+4. nếu điểm quá rõ thì chốt luôn
+5. nếu chưa đủ rõ thì chuyển sang tầng semantic
+```
+
+### Tầng này để làm gì
+
+```txt
+- rất nhanh
+- ít tốn tài nguyên
+- tốt cho câu hỏi quen thuộc
+- giúp không phải gọi embedding hoặc LLM trong mọi request
+```
+
+### Điểm yếu
+
+```txt
+- vẫn phụ thuộc vào marker/cụm từ
+- không hiểu tốt các cách diễn đạt quá khác
+```
+
+---
+
+## 6. Tầng 2: semantic intent examples
+
+### Mục đích
+
+Tầng này giúp hệ thống hiểu **câu tương tự về ý nghĩa**, ngay cả khi không dùng đúng marker.
+
+Ví dụ:
+
+```txt
+shop còn mẫu này không
+mình cần cây cho góc làm việc
+lá cây bị úng thì cứu sao
+alo bạn ơi
+```
+
+Những câu này có thể không trùng hoàn toàn với marker ở tầng rules, nhưng vẫn có ý định rõ.
+
+### Nó hoạt động thế nào
+
+Mỗi intent có một tập câu mẫu đại diện.
+
+Ví dụ logic khái niệm:
+
+```txt
+product_info có các câu mẫu về giá, tồn kho, hình ảnh, độc tính sản phẩm
+recommendation có các câu mẫu về tư vấn, chọn cây, nhu cầu không gian
+plant_care có các câu mẫu về vàng lá, úng rễ, tưới nước
+cart_order có các câu mẫu về mua ngay, thêm giỏ hàng
+general có các câu mẫu chào hỏi
+```
+
+Khi user hỏi:
+
+```txt
+1. hệ thống embed câu hỏi đó
+2. so với embedding của các câu mẫu
+3. tính độ gần nghĩa giữa câu hỏi và từng nhóm intent
+4. chọn intent có độ gần nghĩa cao nhất
+5. nếu đủ chắc thì chốt luôn
+6. nếu vẫn chưa đủ chắc thì mới sang tầng LLM fallback
+```
+
+### Tầng này để làm gì
+
+```txt
+- hiểu câu gần nghĩa tốt hơn rules
+- không cần user gõ đúng từ khóa
+- bắt được ngôn ngữ tự nhiên tốt hơn
+- giảm số lần phải gọi local LLM
+```
+
+### Điểm mạnh nhất của tầng này
+
+Đây là tầng giúp app hiểu được các câu như:
+
+```txt
+"shop còn mẫu này không" → product_info
+"mình cần cây cho góc làm việc" → recommendation
+"lá cây bị úng thì cứu sao" → plant_care
+```
+
+### Điểm yếu
+
+```txt
+- chậm hơn rules vì phải embed query
+- vẫn có thể nhầm nếu các ví dụ intent chưa đủ tốt
+```
+
+---
+
+## 7. Tầng 3: local LLM fallback
+
+### Mục đích
+
+Tầng này chỉ dùng khi hai tầng trước không đủ chắc chắn.
+
+Tức là local LLM **không phải tầng mặc định của router**.
+
+### Nó hoạt động thế nào
+
+Nếu:
+
+```txt
+rules chưa chốt được
+và semantic cũng chưa chốt được
+```
+
+thì hệ thống mới đưa câu hỏi cho local LLM dưới dạng bài toán phân loại intent.
+
+LLM sẽ quyết định câu đó nên thuộc nhóm nào.
+
+### Tầng này để làm gì
+
+```txt
+- xử lý các câu thật sự mơ hồ
+- giữ độ linh hoạt cho hệ thống
+- tránh việc rules và semantic đoán sai khi độ tự tin thấp
+```
+
+### Điểm yếu
+
+```txt
+- chậm nhất trong 3 tầng
+- nếu model local chạy CPU thì tốn thời gian rõ rệt
+```
+
+---
+
+## 8. Trước khi chốt intent, hệ thống extract gì từ câu hỏi
+
+Ngoài việc đo intent, app còn rút ra một số thông tin từ câu hỏi để gửi cho handler xử lý tiếp.
+
+Những thông tin này gồm:
+
+```txt
+product_name
+max_price
+budget_input_currency
+budget_input_amount
+budget_catalog_currency
+care_level
+watering_need
+light_requirement
+placement
+pet_safe
+```
+
+### Ý nghĩa của các entity này
+
+#### product_name
+
+Tên sản phẩm/cây nếu câu hỏi nhắc trực tiếp.
+
+Ví dụ:
+
+```txt
+Cây Aloe vera bao nhiêu tiền?
+→ product_name = Aloe vera
+```
+
+#### max_price
+
+Ngân sách sau khi đã được normalize về cùng currency với catalog.
+
+Ví dụ:
+
+```txt
+dưới 400K → chuyển sang khoảng 16 USD nếu catalog đang dùng USD
+$20 → giữ là 20 USD
+```
+
+#### care_level
+
+Nếu user nói kiểu:
+
+```txt
+dễ chăm
+hợp người mới
+ít chăm
+```
+
+hệ thống có thể hiểu là đang tìm cây `easy`.
+
+#### watering_need / light_requirement / placement
+
+Đây là các gợi ý ngữ nghĩa để phục vụ recommendation.
+
+Ngay cả khi DB chưa có field cứng tương ứng, app vẫn giữ các entity này để dùng ở semantic/vector layer.
+
+#### pet_safe
+
+Nếu câu hỏi liên quan đến mèo/chó/thú cưng thì app ghi nhận đây là câu hỏi an toàn/độc tính.
+
+Entity này rất quan trọng với câu hỏi kiểu:
+
+```txt
+Cây này có độc với mèo không?
+```
+
+---
+
+## 9. Flow chi tiết của từng intent
+
+### 9.1. Product Info
+
+#### Mục tiêu
+
+Trả lời câu hỏi factual về **một sản phẩm cây cụ thể**.
+
+#### Câu hỏi thường gặp
+
+```txt
+Cây Aloe vera bao nhiêu tiền?
+Cây này còn hàng không?
+Cây Jequirity bean có độc với mèo không?
+Cho mình xem thông tin cây này.
+```
+
+#### Cách detect
+
+Product Info thường được nhận diện từ:
+
+```txt
+giá
+bao nhiêu tiền
+còn hàng
+tồn kho
+size
+hình ảnh
+độc tính
+an toàn với thú cưng
+thông tin sản phẩm
+```
+
+Nếu user diễn đạt bằng câu gần nghĩa, semantic layer có thể bắt thay cho rules.
+
+#### Luồng xử lý chi tiết
+
+Khi intent = `product_info`, hệ thống làm như sau:
+
+```txt
+1. tìm product_name nếu có
+2. thử tìm sản phẩm theo tên / slug / sku
+3. nếu chưa thấy thì dò xem trong câu có nhắc một product cụ thể không
+4. nếu vẫn không thấy thì hỏi lại user tên cây
+5. nếu thấy product thì tải full product context
+```
+
+`Full product context` nghĩa là hệ thống sẽ gom đủ dữ liệu từ:
+
+```txt
+products
+product_categories
+product_variants
+variant_inventory
+product_images
+plants
+```
+
+Sau đó hệ thống compute thêm:
+
+```txt
+price_min
+price_max
+price_text
+available_qty
+in_stock
+primary_image_url
+```
+
+#### Product Info có dùng LLM không
+
+Hiện tại:
+
+```txt
+Không dùng LLM để trả lời.
+```
+
+Lý do:
+
+```txt
+đây là factual flow
+cần độ đúng cao
+MongoDB đã có dữ liệu thật
+tránh hallucination
+tránh chậm
+```
+
+#### Câu hỏi độc tố ở Product Info được xử lý thế nào
+
+Đây là điểm đặc biệt.
+
+Khi câu hỏi có tín hiệu liên quan đến thú cưng hoặc độc tính, hệ thống **không dùng cùng kiểu trả lời với giá/tồn kho** nữa.
+
+Ví dụ:
+
+```txt
+Cây Jequirity bean có độc với mèo không?
+```
+
+Lúc này app ưu tiên trả lời theo hướng:
+
+```txt
+1. kiểm tra plants.toxicity_warning
+2. kiểm tra plants.safety_notes
+3. xác định đây là câu hỏi về an toàn/độc tính
+4. trả lời tập trung vào độc tính trước
+```
+
+Nghĩa là:
+
+```txt
+Nếu user hỏi độc tố,
+app không nên mở đầu bằng giá/tồn kho,
+mà phải mở đầu bằng kết luận an toàn/không an toàn.
+```
+
+Ví dụ hướng trả lời đúng:
+
+```txt
+Theo dữ liệu cây nền trong hệ thống, cây này có cảnh báo độc tính và không nên xem là an toàn cho mèo/chó.
+```
+
+#### Dữ liệu thật của Product Info lấy từ đâu
+
+```txt
+Tên, slug, sku, mô tả      → products
+Giá                         → product_variants.price
+Tồn kho                     → variant_inventory.available_qty
+Ảnh                         → product_images
+Độc tính / safety notes     → plants
+Nhóm sản phẩm (Plants/Pots) → product_categories
+```
+
+---
+
+### 9.2. Recommendation
+
+#### Mục tiêu
+
+Tư vấn cây phù hợp với nhu cầu user.
+
+#### Câu hỏi thường gặp
+
+```txt
+Tôi muốn cây dễ chăm dưới 400K.
+Mình cần cây cho góc làm việc.
+Tôi muốn cây hợp người mới chơi.
+Phòng ít nắng nên chọn cây gì?
+```
+
+#### Cách detect
+
+Recommendation thường được nhận diện từ:
+
+```txt
+tư vấn
+gợi ý
+nên mua
+nên chọn
+phù hợp
+để bàn
+phòng khách
+phòng ngủ
+văn phòng
+```
+
+Nếu user dùng cách nói tự nhiên hơn như:
+
+```txt
+mình cần cây cho góc làm việc
+mình muốn tìm một cây tặng sinh nhật
+```
+
+thì semantic layer sẽ hỗ trợ nhận diện intent này.
+
+#### Luồng xử lý chi tiết
+
+Khi intent = `recommendation`, hệ thống làm như sau:
+
+```txt
+1. lấy các filters đã extract
+2. bỏ product_name nếu bị extract nhầm
+3. tìm các candidate bằng hard filters trước
+4. nếu query có tính semantic hoặc candidate ít thì bật vector search
+5. merge kết quả filter cứng và vector search
+6. rank candidate
+7. lấy top 3
+8. build câu trả lời deterministic
+9. trả product cards
+```
+
+#### Hard filters hiện có thật trong app
+
+Hiện app chỉ hard filter trên field có thật:
+
+```txt
+care_level
+max_price
+in_stock
+```
+
+Chi tiết nguồn dữ liệu:
+
+```txt
+care_level → products.care_level
+max_price  → so với giá variant sau khi normalize currency
+in_stock   → variant_inventory.available_qty
+```
+
+#### Semantic recommendation để làm gì
+
+Semantic/vector search được dùng cho các nhu cầu như:
+
+```txt
+để bàn
+ít nắng
+thiếu sáng
+phòng ngủ
+phòng khách
+làm quà
+minimal
+chill
+```
+
+Vì DB hiện tại chưa có đủ field cứng để filter hoàn toàn theo những nhu cầu này.
+
+#### Recommendation có dùng LLM để trả lời không
+
+Hiện tại:
+
+```txt
+Không dùng LLM để trả lời.
+```
+
+Lý do:
+
+```txt
+giữ tốc độ tốt hơn
+giảm hallucination
+recommendation hiện build deterministic text từ candidate thật
+```
+
+#### Recommendation dùng embedding thế nào
+
+Khi app thấy câu recommendation mang tính ngữ nghĩa, nó sẽ:
+
+```txt
+1. embed câu query
+2. search trên vector index của product
+3. lấy product gần nghĩa nhất
+4. query lại MongoDB để lấy dữ liệu thật mới nhất
+5. mới đem đi rank và trả kết quả
+```
+
+Ý nghĩa của bước này:
+
+```txt
+vector search chỉ giúp tìm sản phẩm phù hợp theo nghĩa,
+không phải nguồn sự thật cho giá hoặc tồn kho.
+```
+
+---
+
+### 9.3. Plant Care
+
+#### Mục tiêu
+
+Trả lời câu hỏi về chăm cây, sức khỏe cây, bệnh cây.
+
+#### Câu hỏi thường gặp
+
+```txt
+Tại sao lá cây bị vàng?
+Lá cây bị úng thì cứu sao?
+Cây tưới bao lâu một lần?
+```
+
+#### Cách detect
+
+Plant Care thường được nhận diện từ:
+
+```txt
+vàng lá
+úng rễ
+thối rễ
+héo lá
+đốm lá
+sâu bệnh
+tưới bao lâu
+chăm sóc
+```
+
+Semantic layer hỗ trợ các câu như:
 
 ```txt
 lá cây bị úng thì cứu sao
 cách cứu cây sắp chết
 ```
 
-### 14.3. Flow xử lý sau khi detect được
+#### Luồng xử lý chi tiết
 
-Handler:
-
-```txt
-app/knowledge/rag_handler.py
-```
-
-Flow chi tiết:
+Khi intent = `plant_care`, app làm như sau:
 
 ```txt
-1. embed câu hỏi user bằng EmbeddingService
-2. query vector search trên knowledge_chunks
-3. nếu có chunks:
-   - build context
-   - build sources
-   - nếu local LLM available thì generate câu trả lời từ context
-   - nếu LLM fail thì fallback bằng cắt nội dung chunk đầu tiên
-4. nếu không có chunks thì trả message chưa có đủ tài liệu
+1. embed câu hỏi user
+2. search vector trên knowledge base
+3. nếu có context tài liệu thì build context
+4. nếu local LLM available thì cho model trả lời dựa trên context
+5. nếu model fail thì fallback bằng cách lấy đoạn context gần nhất
+6. nếu không có knowledge phù hợp thì nói rõ chưa đủ tài liệu
 ```
 
-### 14.4. Nguồn dữ liệu thật ở intent này
-
-```txt
-knowledge_chunks
-knowledge vector index
-```
-
-### 14.5. Có dùng embedding không
+#### Plant Care có dùng embedding không
 
 ```txt
 Có.
 ```
 
-### 14.6. Có dùng LLM không
+#### Plant Care có dùng LLM không
 
 ```txt
 Có, nhưng chỉ sau khi đã có context từ knowledge base.
 ```
 
----
-
-## 15. Intent: cart_order
-
-### 15.1. Dùng khi nào
-
-Ví dụ:
-
-```txt
-Thêm sản phẩm này vào giỏ
-Mua ngay cây này
-Đặt hàng giúp mình
-```
-
-### 15.2. Detect như thế nào
-
-Rules bắt các từ như:
-
-```txt
-them vao gio
-gio hang
-dat hang
-mua ngay
-checkout
-thanh toan
-```
-
-Semantic layer bắt các câu gần nghĩa như:
-
-```txt
-thêm sản phẩm này vào giỏ giúp mình
-```
-
-### 15.3. Flow xử lý sau khi detect được
-
-Hiện tại flow này **chưa nối Cart API thật**.
-
-ChatService trả placeholder:
-
-```txt
-Mình đã hiểu bạn muốn thao tác giỏ hàng/đặt hàng. Phần này nên nối với Cart API riêng...
-```
-
 Tức là:
 
 ```txt
-intent được nhận diện đúng
-nhưng chưa có side effect thêm giỏ hàng thật
+LLM không tự bịa kiến thức plant care từ đầu.
+LLM chỉ diễn giải sau khi đã có context phù hợp.
 ```
 
 ---
 
-## 16. Intent: general
+### 9.4. Cart Order
 
-### 16.1. Dùng khi nào
+#### Mục tiêu
 
-Ví dụ:
+Nhận diện user muốn mua hoặc thêm giỏ.
+
+#### Cách detect
+
+Từ các cụm như:
 
 ```txt
-Xin chào
-Alo bạn ơi
-Bạn có thể giúp gì cho BigPlant?
+thêm vào giỏ
+giỏ hàng
+đặt hàng
+mua ngay
+checkout
+thanh toán
 ```
 
-### 16.2. Detect như thế nào
+#### Luồng xử lý hiện tại
 
-Rules bắt các từ như:
+Hiện flow này mới chỉ dừng ở mức:
 
 ```txt
-xin chao
+nhận diện đúng ý định
+trả placeholder message
+```
+
+Nghĩa là:
+
+```txt
+app hiểu user muốn thao tác cart/order,
+nhưng chưa nối Cart API thật trong chat flow.
+```
+
+---
+
+### 9.5. General
+
+#### Mục tiêu
+
+Xử lý chào hỏi hoặc trò chuyện chung.
+
+#### Cách detect
+
+General thường được bắt từ:
+
+```txt
+xin chào
 hello
 hi
-cam on
+cảm ơn
 ```
 
-Semantic layer bắt các câu gần nghĩa như:
+Semantic layer hỗ trợ thêm các câu như:
 
 ```txt
 alo bạn ơi
 giúp mình với
 ```
 
-### 16.3. Flow xử lý sau khi detect được
+#### Luồng xử lý hiện tại
 
-Flow general có 2 nhánh nhỏ:
+General hiện có 2 nhánh:
 
-#### Nhánh A: greeting ngắn
+##### Nhánh A: greeting ngắn
 
-Nếu câu là greeting ngắn như:
+Nếu chỉ là câu ngắn kiểu:
 
 ```txt
 xin chào
@@ -902,166 +816,84 @@ alo bạn ơi
 hello
 ```
 
-thì `ChatService._handle_general(...)` trả deterministic greeting,
-không gọi LLM.
+thì app trả deterministic greeting.
 
 Mục đích:
 
 ```txt
-- nhanh hơn
-- tránh model sinh text rác
-- tránh lãng phí tài nguyên
+nhanh hơn
+tránh dùng LLM không cần thiết
+tránh model sinh output rác
 ```
 
-#### Nhánh B: general chat dài hơn
+##### Nhánh B: general chat dài hơn
 
-Nếu không phải greeting ngắn, flow là:
+Nếu là câu general dài hơn, app sẽ:
 
 ```txt
-1. ChatService gọi self.llm.generate(GENERAL_PROMPT)
-2. local LLM sinh câu trả lời ngắn
-3. nếu LLM fail → fallback bằng static answer
+1. gửi prompt cho local LLM
+2. local LLM sinh câu trả lời
+3. nếu fail thì fallback bằng static answer
 ```
 
-### 16.4. Có dùng LLM không
+#### General có dùng LLM không
 
 ```txt
-Có, nhưng không phải mọi general message đều dùng.
-Greeting ngắn thì deterministic, câu general dài hơn mới dùng local LLM.
+Có, nhưng không phải mọi trường hợp đều dùng.
 ```
 
 ---
 
-## 17. Intent: unclear
+### 9.6. Unclear
 
-### 17.1. Khi nào xảy ra
+#### Khi nào xảy ra
 
-Khi:
+Khi app không tự tin người dùng đang muốn gì.
 
-```txt
-rules không chắc
-semantic không chắc
-LLM fallback cũng không đưa ra intent đủ tin cậy
-```
-
-### 17.2. App làm gì
-
-App trả câu hỏi gợi mở:
+Ví dụ:
 
 ```txt
-Bạn muốn hỏi thông tin cây cụ thể, nhờ mình tư vấn chọn cây, hay hỏi cách chăm cây?
+Giúp mình với
+Cái này ổn không
 ```
+
+#### Luồng xử lý
+
+Nếu rules và semantic đều không đủ rõ,
+app có thể thử LLM fallback để phân loại.
+
+Nếu vẫn không rõ, app trả một câu hỏi mở để yêu cầu user nói rõ hơn.
 
 Mục đích:
 
 ```txt
-buộc user làm rõ ý định thay vì để app đoán sai
+không đoán liều
+ép user làm rõ ý định
 ```
 
-## 18. Full flow của một câu hỏi trong app
+---
 
-Đây là flow end-to-end đúng với source code hiện tại.
+## 10. Model LLM đang dùng trong app
 
-### Bước 1: API nhận request
+App hiện hỗ trợ 3 model LLM local chính.
 
-```txt
-POST /api/chat/message
-payload: { message, user_id, session_id }
-```
+### 10.1. Model mặc định
 
-### Bước 2: ChatService nhận message
-
-```txt
-handle_message(message, user_id, session_id)
-```
-
-### Bước 3: Router classify
-
-```txt
-normalize text
-→ extract entities
-→ rules scoring
-→ nếu đủ chắc thì return
-→ nếu chưa đủ thì semantic scoring
-→ nếu đủ chắc thì return
-→ nếu chưa đủ thì LLM fallback
-```
-
-### Bước 4: Switch theo intent
-
-```txt
-product_info   → ProductInfoHandler
-recommendation → RecommendationHandler
-plant_care     → PlantCareRagHandler
-cart_order     → placeholder branch
-general        → general branch
-unclear        → fallback branch
-```
-
-### Bước 5: Handler xử lý nghiệp vụ
-
-```txt
-query MongoDB / vector search / local LLM tùy flow
-```
-
-### Bước 6: Build response
-
-```txt
-message
-products
-sources
-metadata.route
-metadata.timing_ms
-```
-
-### Bước 7: Trả JSON cho frontend
-
-```txt
-Frontend nhận response và render chat text + product cards nếu có.
-```
-
-## 19. Model nào đang dùng trong app
-
-App hiện có 2 loại model chính:
-
-```txt
-1. Local LLM
-2. Embedding model
-```
-
-### 19.1. Local LLM mặc định đang dùng
-
-Model mặc định trong `.env` hiện là:
+Model mặc định hiện tại:
 
 ```txt
 Qwen2.5-7B-Instruct Q4_K_M
 ```
 
-Vai trò trong app:
-
-```txt
-router fallback khi rules + semantic chưa chắc
-general chat
-plant care nếu đã có context RAG
-```
-
-### 19.2. 3 lựa chọn LLM đang có trong app
-
-#### Qwen2.5-7B-Instruct Q4_K_M
-
-Vai trò:
-
-```txt
-model mặc định hiện tại
-```
+### 10.2. Vì sao đang dùng Qwen2.5-7B làm mặc định
 
 Điểm mạnh:
 
 ```txt
 tiếng Việt ổn
 instruction following tốt
-chat tự nhiên hơn VinaLLaMA
-phù hợp làm model mặc định cho app
+general chat khá tự nhiên
+ổn định cho vai trò router fallback + general chat + RAG answer
 ```
 
 Điểm yếu:
@@ -1070,110 +902,140 @@ phù hợp làm model mặc định cho app
 nếu chạy CPU-only thì vẫn chậm
 ```
 
-#### Meta-Llama-3.1-8B-Instruct Q4_K_M
-
-Vai trò:
-
-```txt
-model thay thế để benchmark chất lượng general/reasoning
-```
+### 10.3. Meta-Llama-3.1-8B-Instruct
 
 Điểm mạnh:
 
 ```txt
 general chat tốt
 reasoning tốt
-ổn định khi viết câu trả lời tự nhiên
+câu trả lời tự nhiên
 ```
 
 Điểm yếu:
 
 ```txt
-tiếng Việt không đều bằng Qwen trong một số câu tự nhiên
+tiếng Việt có thể không đều bằng Qwen trong một số tình huống
 ```
 
-#### VinaLLaMA-7B-Chat Q5_0
-
-Vai trò:
-
-```txt
-model thay thế thiên tiếng Việt
-```
+### 10.4. VinaLLaMA-7B-Chat
 
 Điểm mạnh:
 
 ```txt
-hợp để test hội thoại tiếng Việt
+thiên về tiếng Việt
+hợp để test hội thoại Việt
 ```
 
 Điểm yếu:
 
 ```txt
 cũ hơn
-reasoning yếu hơn Qwen/Llama 3.1
+reasoning yếu hơn Qwen và Llama 3.1
 tuân thủ instruction không tốt bằng Qwen
 ```
 
-## 20. Embedding model đang dùng
+### 10.5. LLM hiện được dùng ở đâu trong app
 
-Model embedding hiện tại:
+Hiện local LLM được dùng ở 3 chỗ chính:
+
+```txt
+1. Router fallback khi rules + semantic không đủ chắc
+2. General chat
+3. Plant Care khi đã có knowledge context
+```
+
+Không dùng LLM cho:
+
+```txt
+Product Info factual
+Recommendation factual
+```
+
+---
+
+## 11. Embedding model đang dùng
+
+Embedding model hiện tại:
 
 ```txt
 BAAI/bge-m3
 ```
 
-Vai trò trong app:
+### 11.1. Vì sao dùng model này
+
+Điểm mạnh:
 
 ```txt
-1. semantic intent router
-2. product recommendation vector search
+đa ngôn ngữ
+hỗ trợ tiếng Việt tốt
+phù hợp semantic search và intent similarity
+```
+
+Điểm yếu:
+
+```txt
+phải load model nên request semantic đầu tiên sẽ chậm hơn
+```
+
+### 11.2. Embedding model đang được dùng ở đâu
+
+Hiện tại embedding được dùng ở 3 luồng:
+
+```txt
+1. semantic router
+2. recommendation vector search
 3. plant care / RAG vector search
 ```
 
-### 20.1. Flow của embedding trong app
-
-#### A. Semantic router
+### 11.3. Embedding flow trong router
 
 ```txt
 message
 → embed query
-→ so với intent example vectors
-→ lấy intent semantic gần nhất
+→ so với bộ câu mẫu của từng intent
+→ chọn intent semantic gần nhất
 ```
 
-#### B. Recommendation vector search
+### 11.4. Embedding flow trong recommendation
 
 ```txt
-message recommendation có tính semantic
+message có nhu cầu semantic
 → embed query
 → search product vector index
 → lấy danh sách product gần nghĩa
-→ hydrate lại từ MongoDB
-→ rank
+→ query MongoDB lại để lấy giá/tồn kho thật
 ```
 
-#### C. Plant care RAG
+### 11.5. Embedding flow trong plant care
 
 ```txt
 message plant care
 → embed query
-→ search knowledge_chunks vector index
+→ search knowledge vector index
 → lấy top chunks
 → build context
-→ đưa context cho local LLM
+→ LLM diễn giải
 ```
 
-## 21. Điểm quan trọng nhất của logic app hiện tại
+---
 
-Nếu cần tóm gọn phần logic để thuyết trình, có thể chốt bằng 8 ý sau:
+## 12. Flow end-to-end của một câu hỏi
+
+Tóm tắt cuối cùng, một câu hỏi đi qua hệ thống như sau:
 
 ```txt
-1. App không đẩy mọi câu hỏi vào LLM.
-2. App route câu hỏi trước, rồi mới xử lý theo intent.
-3. Router hiện là 3 tầng: rules → semantic → LLM fallback.
-4. Product Info dùng MongoDB thật, không cho LLM bịa.
-5. Recommendation dùng hard filters + vector search.
-6. Plant Care dùng embedding + RAG nếu có knowledge base.
-7. General chat mới là nơi local LLM được dùng trực tiếp nhiều hơn.
-8. Mọi response đều đi qua metadata.timing_ms để debug hiệu năng.
+Người dùng gửi câu hỏi
+→ hệ thống normalize câu hỏi
+→ extract entities
+→ chấm intent bằng rules
+→ nếu chưa chắc thì chấm bằng semantic examples
+→ nếu vẫn chưa chắc thì dùng LLM fallback
+→ xác định intent cuối cùng
+→ chuyển sang nhánh xử lý tương ứng
+→ query MongoDB / vector search / LLM theo đúng flow của intent đó
+→ build response
+→ trả về cho người dùng
 ```
+
+Đây là logic thực thi thực tế của app hiện tại.

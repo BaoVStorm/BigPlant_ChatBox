@@ -37,7 +37,7 @@ class ProductInfoHandler:
                 "metadata": {"route": route.model_dump()},
             }
 
-        answer = build_product_answer(context)
+        answer = build_product_answer(context, message, route.entities)
         llm_used = False
 
         return {
@@ -49,33 +49,83 @@ class ProductInfoHandler:
         }
 
 
-def build_product_answer(context: dict[str, Any]) -> str:
+def build_product_answer(context: dict[str, Any], message: str, entities: dict[str, Any]) -> str:
     product = context.get("product") or {}
     plant = context.get("plant") or {}
     variants = context.get("variants") or []
     computed = context.get("computed") or {}
+    focus = detect_product_question_focus(message, entities)
 
     name = product.get("name") or "Sản phẩm này"
-    lines = [f"{name} hiện có giá {computed.get('price_text') or 'chưa có dữ liệu giá'}."]
 
-    if variants:
+    if focus == "toxicity":
+        return build_toxicity_answer(name, plant)
+
+    lines = []
+    if focus in {"price", "stock", "variant", "image", "general"}:
+        lines.append(f"{name} hiện có giá {computed.get('price_text') or 'chưa có dữ liệu giá'}.")
+
+    if variants and focus in {"variant", "general", "price"}:
         variant_names = ", ".join(str(variant.get("variant_name") or variant.get("variant_sku") or "biến thể") for variant in variants[:5])
         lines.append(f"Các lựa chọn hiện có: {variant_names}.")
-    else:
+    elif not variants and focus in {"variant", "general", "price"}:
         lines.append("Hiện chưa có dữ liệu biến thể cho sản phẩm này.")
 
-    if computed.get("has_inventory"):
+    if computed.get("has_inventory") and focus in {"stock", "general", "price"}:
         available_qty = int(computed.get("available_qty") or 0)
         lines.append(f"Tổng tồn kho có thể bán: {available_qty}.")
-    else:
+    elif focus in {"stock", "general", "price"}:
         lines.append("Hiện chưa có dữ liệu tồn kho cho sản phẩm này.")
 
     toxicity_warning = plant.get("toxicity_warning")
     safety_notes = plant.get("safety_notes")
-    if toxicity_warning or safety_notes:
+    if (toxicity_warning or safety_notes) and focus == "general":
         lines.append(f"Lưu ý an toàn: {toxicity_warning or safety_notes}.")
 
     return " ".join(lines)
+
+
+def detect_product_question_focus(message: str, entities: dict[str, Any]) -> str:
+    normalized = normalize_text(message)
+    if entities.get("pet_safe") or contains_any(normalized, ["co doc", "doc voi", "an toan voi meo", "an toan voi cho", "thu cung"]):
+        return "toxicity"
+    if contains_any(normalized, ["con hang", "het hang", "ton kho"]):
+        return "stock"
+    if contains_any(normalized, ["size", "kich thuoc", "mau nao", "loai nao", "mau sac"]):
+        return "variant"
+    if contains_any(normalized, ["hinh anh", "anh san pham", "xem anh"]):
+        return "image"
+    if contains_any(normalized, ["gia", "bao nhieu tien", "bao nhieu"]):
+        return "price"
+    return "general"
+
+
+def build_toxicity_answer(name: str, plant: dict[str, Any]) -> str:
+    toxicity_warning = str(plant.get("toxicity_warning") or "").strip()
+    safety_notes = str(plant.get("safety_notes") or "").strip()
+    toxicity_text = f"{toxicity_warning} {safety_notes}".strip().lower()
+
+    if not toxicity_warning and not safety_notes:
+        return f"Mình chưa có dữ liệu độc tính hoặc độ an toàn với thú cưng của {name} trong hệ thống hiện tại."
+
+    if contains_any(
+        toxicity_text,
+        [
+            "highly toxic",
+            "toxic",
+            "life-threatening",
+            "poison",
+            "poisoning",
+            "keep seeds away from children and pets",
+            "keep away from pets",
+        ],
+    ):
+        return f"Theo dữ liệu cây nền trong hệ thống, {name} có cảnh báo độc tính và không nên xem là an toàn cho mèo/chó hoặc thú cưng. Lưu ý: {toxicity_warning or safety_notes}"
+
+    if contains_any(toxicity_text, ["non-toxic", "safe for pets", "pet safe"]):
+        return f"Theo dữ liệu hiện tại trong hệ thống, {name} không có cảnh báo độc tính rõ ràng và có thể xem là tương đối an toàn cho thú cưng."
+
+    return f"Theo dữ liệu cây nền trong hệ thống, {name} có ghi chú an toàn nhưng chưa đủ để khẳng định là hoàn toàn an toàn cho mèo/chó. Lưu ý: {toxicity_warning or safety_notes}"
 
 
 def build_product_card(context: dict[str, Any]) -> dict[str, Any]:
@@ -134,3 +184,11 @@ def format_number(value: float) -> str:
     else:
         number = f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     return f"{number} VND"
+
+
+def normalize_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def contains_any(text: str, markers: list[str]) -> bool:
+    return any(marker in text for marker in markers)
