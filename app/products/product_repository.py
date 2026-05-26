@@ -76,6 +76,36 @@ class ProductRepository:
         doc = self.products.find_one(self._plant_product_query({"slug": slug}))
         return serialize_mongo(doc) if doc else None
 
+    def get_product_by_detected_plant(
+        self,
+        label: str | None = None,
+        scientific_name_search: str | None = None,
+        plant: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if plant and plant.get("_id"):
+            doc = self.products.find_one(self._plant_product_query({"plant_id": {"$in": object_id_or_string_values(plant.get("_id"))}}))
+            if doc:
+                return serialize_mongo(doc)
+
+        if scientific_name_search:
+            raw_plant = self.plants.find_one({"scientific_name_search": scientific_name_search}, {"_id": 1})
+            if raw_plant:
+                doc = self.products.find_one(self._plant_product_query({"plant_id": {"$in": object_id_or_string_values(raw_plant.get("_id"))}}))
+                if doc:
+                    return serialize_mongo(doc)
+
+        for candidate in [
+            label,
+            scientific_name_search.replace("_", " ") if scientific_name_search else None,
+            plant.get("scientific_name") if plant else None,
+            plant.get("common_name") if plant else None,
+        ]:
+            if candidate:
+                product = self.get_product_by_name(str(candidate))
+                if product:
+                    return product
+        return None
+
     def find_product_mentioned(self, message: str) -> dict[str, Any] | None:
         lowered = message.lower()
         cursor = self.products.find(self._plant_product_query(), {"name": 1, "slug": 1, "sku": 1}).limit(700)

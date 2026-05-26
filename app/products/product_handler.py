@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 from app.llm.local_llm import LocalLLM
+from app.plant_detect.schemas import ImagePlantContext
 from app.products.product_repository import ProductRepository
 from app.products.question_focus import (
     contains_negative_toxicity_signal,
@@ -17,13 +16,15 @@ class ProductInfoHandler:
         self.repository = repository or ProductRepository()
         self.llm = llm or LocalLLM()
 
-    def handle(self, message: str, route: IntentRoute) -> dict[str, Any]:
+    def handle(self, message: str, route: IntentRoute, image_context: ImagePlantContext | None = None) -> dict[str, Any]:
         product_name = str(route.entities.get("product_name") or "").strip()
-        product = self.repository.get_product_by_name(product_name) if product_name else None
-        if not product:
+        context = image_context.resolved_product_context if image_context and image_context.resolved_product_context else None
+
+        product = self.repository.get_product_by_name(product_name) if product_name and not context else None
+        if not product and not context:
             product = self.repository.find_product_mentioned(message)
 
-        if not product:
+        if not product and not context:
             return {
                 "intent": "product_info",
                 "message": "Bạn muốn hỏi thông tin của cây nào? Mình cần tên cây để kiểm tra giá, size, tồn kho hoặc thông tin an toàn trong hệ thống.",
@@ -32,7 +33,8 @@ class ProductInfoHandler:
                 "metadata": {"route": route.model_dump()},
             }
 
-        context = self.repository.get_product_full_context(product)
+        if not context:
+            context = self.repository.get_product_full_context(product)
         if not context:
             return {
                 "intent": "product_info",
@@ -50,7 +52,11 @@ class ProductInfoHandler:
             "message": answer,
             "products": [build_product_card(context)],
             "sources": [],
-            "metadata": {"route": route.model_dump(), "llm_used": llm_used},
+            "metadata": {
+                "route": route.model_dump(),
+                "llm_used": llm_used,
+                "image_assisted": bool(image_context and image_context.resolved_product_context),
+            },
         }
 
 
@@ -88,21 +94,6 @@ def build_product_answer(context: dict[str, Any], message: str, entities: dict[s
         lines.append(f"Lưu ý an toàn: {toxicity_warning or safety_notes}.")
 
     return " ".join(lines)
-
-
-def detect_product_question_focus(message: str, entities: dict[str, Any]) -> str:
-    normalized = normalize_text(message)
-    if entities.get("pet_safe") or contains_any(normalized, ["co doc", "doc voi", "an toan voi meo", "an toan voi cho", "thu cung"]):
-        return "toxicity"
-    if contains_any(normalized, ["con hang", "het hang", "ton kho"]):
-        return "stock"
-    if contains_any(normalized, ["size", "kich thuoc", "mau nao", "loai nao", "mau sac"]):
-        return "variant"
-    if contains_any(normalized, ["hinh anh", "anh san pham", "xem anh"]):
-        return "image"
-    if contains_any(normalized, ["gia", "bao nhieu tien", "bao nhieu"]):
-        return "price"
-    return "general"
 
 
 def build_toxicity_answer(name: str, plant: dict[str, Any]) -> str:
@@ -178,7 +169,3 @@ def format_number(value: float) -> str:
     else:
         number = f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     return f"{number} VND"
-
-
-def normalize_text(value: Any) -> str:
-    return str(value or "").strip().lower()

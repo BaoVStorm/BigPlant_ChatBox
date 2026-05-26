@@ -4,11 +4,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.plant_detect.schemas import ChatImageInput
+
 
 class ChatMessageRequest(BaseModel):
     message: str = Field(..., min_length=1)
     user_id: str | None = None
     session_id: str | None = None
+    image: ChatImageInput | None = None
 
 
 class ChatMessageResponse(BaseModel):

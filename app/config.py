@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     catalog_price_currency: str = Field(default="USD", alias="CATALOG_PRICE_CURRENCY")
     vnd_per_usd: float = Field(default=25000.0, alias="VND_PER_USD")
 
+    plant_detect_api_url: str = Field(default="http://127.0.0.1:3104/api/plant_detect", alias="PLANT_DETECT_API_URL")
+    plant_detect_timeout_seconds: int = Field(default=20, alias="PLANT_DETECT_TIMEOUT_SECONDS")
+    plant_detect_topk: int = Field(default=5, alias="PLANT_DETECT_TOPK")
+    plant_detect_two_pass: bool = Field(default=True, alias="PLANT_DETECT_TWO_PASS")
+    plant_detect_use_mock: bool = Field(default=False, alias="PLANT_DETECT_USE_MOCK")
+
     embedding_model_name: str = Field(default="./models/embeddings/bge-m3", alias="EMBEDDING_MODEL_NAME")
     embedding_device: str = Field(default="cuda", alias="EMBEDDING_DEVICE")
 
