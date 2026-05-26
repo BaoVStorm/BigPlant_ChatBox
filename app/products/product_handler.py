@@ -4,6 +4,11 @@ from typing import Any
 
 from app.llm.local_llm import LocalLLM
 from app.products.product_repository import ProductRepository
+from app.products.question_focus import (
+    contains_negative_toxicity_signal,
+    contains_positive_toxicity_signal,
+    detect_product_question_focus,
+)
 from app.router.schemas import IntentRoute
 
 
@@ -108,21 +113,10 @@ def build_toxicity_answer(name: str, plant: dict[str, Any]) -> str:
     if not toxicity_warning and not safety_notes:
         return f"Mình chưa có dữ liệu độc tính hoặc độ an toàn với thú cưng của {name} trong hệ thống hiện tại."
 
-    if contains_any(
-        toxicity_text,
-        [
-            "highly toxic",
-            "toxic",
-            "life-threatening",
-            "poison",
-            "poisoning",
-            "keep seeds away from children and pets",
-            "keep away from pets",
-        ],
-    ):
+    if contains_negative_toxicity_signal(toxicity_text):
         return f"Theo dữ liệu cây nền trong hệ thống, {name} có cảnh báo độc tính và không nên xem là an toàn cho mèo/chó hoặc thú cưng. Lưu ý: {toxicity_warning or safety_notes}"
 
-    if contains_any(toxicity_text, ["non-toxic", "safe for pets", "pet safe"]):
+    if contains_positive_toxicity_signal(toxicity_text):
         return f"Theo dữ liệu hiện tại trong hệ thống, {name} không có cảnh báo độc tính rõ ràng và có thể xem là tương đối an toàn cho thú cưng."
 
     return f"Theo dữ liệu cây nền trong hệ thống, {name} có ghi chú an toàn nhưng chưa đủ để khẳng định là hoàn toàn an toàn cho mèo/chó. Lưu ý: {toxicity_warning or safety_notes}"
@@ -188,7 +182,3 @@ def format_number(value: float) -> str:
 
 def normalize_text(value: Any) -> str:
     return str(value or "").strip().lower()
-
-
-def contains_any(text: str, markers: list[str]) -> bool:
-    return any(marker in text for marker in markers)
