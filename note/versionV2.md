@@ -147,6 +147,38 @@ pet_safe
 
 Các preference này được lưu trong `chat_sessions.memory.preferences`.
 
+### G. Dialogue policy
+
+Đã thêm lớp chính sách hội thoại để xử lý các trường hợp bot không nên chỉ dựa vào intent thô.
+
+Ví dụ:
+
+```txt
+user gửi ảnh nhưng không nhắn gì
+→ fallback sang product_info overview
+
+user đang hỏi tiếp về cây vừa nói tới
+→ kéo context_subject từ session vào
+
+user hỏi tiếp sau recommendation kiểu "có loại nào rẻ hơn không"
+→ coi đó là recommendation refinement thay vì product_info
+```
+
+### H. Recommendation refinement
+
+Đã thêm refinement logic dùng memory từ session trước.
+
+Ví dụ:
+
+```txt
+Lượt 1: tôi muốn cây dễ chăm dưới 400K
+→ bot lưu budget + care_level + last_recommendations
+
+Lượt 2: có loại nào rẻ hơn không?
+→ bot dùng top recommendation trước đó làm reference price
+→ chỉ trả các cây rẻ hơn reference đó
+```
+
 ## 3. Hành vi mới của V2
 
 ### 3.1. Gửi ảnh nhưng không nhắn gì
@@ -211,6 +243,22 @@ follow_up_message
 suggested_questions
 ```
 
+### 3.5. Câu hỏi tiếp theo theo ngữ cảnh đã tốt hơn
+
+Trước đây:
+
+```txt
+user hỏi tiếp "cây này còn hàng không" hoặc "có loại nào rẻ hơn không"
+→ bot dễ quên hoặc route sai
+```
+
+Hiện tại:
+
+```txt
+bot có thể dùng active_subject và preferences trong session
+→ hiểu câu hỏi tiếp theo theo đúng ngữ cảnh trước đó
+```
+
 ## 4. Những gì V2 đã tốt hơn
 
 ```txt
@@ -220,16 +268,18 @@ bot hỗ trợ image-aware conversation
 bot không dừng đột ngột sau mỗi câu trả lời
 bot bắt đầu có preference memory
 bot trả lời độc tính đúng trọng tâm hơn
+bot hiểu refinement theo session tốt hơn
+bot có facet classification để hiểu sâu hơn câu hỏi trong từng intent
 ```
 
 ## 5. Những gì V2 vẫn chưa hoàn hảo
 
 ```txt
 preference memory mới ở mức cơ bản
-recommendation chưa có dialogue policy đủ sâu để hỏi lại slot còn thiếu
 active_subject hiện chủ yếu là 1 product chính, chưa hỗ trợ nhiều subject song song
 plant care vẫn phụ thuộc mạnh vào knowledge base hiện có
 general chat vẫn có thể chậm nếu dùng local LLM CPU-only
+clarification policy vẫn chưa đủ sâu để hỏi lại khi thiếu slot quan trọng
 ```
 
 ## 6. Hướng nâng cấp tiếp theo sau V2

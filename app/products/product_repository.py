@@ -386,10 +386,17 @@ def compute_product_values(variants: list[dict[str, Any]], images: list[dict[str
 def context_matches_filters(context: dict[str, Any], filters: dict[str, Any]) -> bool:
     computed = context.get("computed") or {}
     product = context.get("product") or {}
+    product_id = str(product.get("_id") or "")
     if filters.get("max_price"):
         price_min = computed.get("price_min")
         if price_min is None or float(price_min) > float(filters["max_price"]):
             return False
+    if filters.get("reference_price_max") is not None:
+        price_min = computed.get("price_min")
+        if price_min is None or float(price_min) >= float(filters["reference_price_max"]):
+            return False
+    if filters.get("reference_product_id") and product_id == str(filters["reference_product_id"]):
+        return False
     if filters.get("care_level") and product.get("care_level") != filters["care_level"]:
         if normalize_text(product.get("care_level")) != normalize_text(filters.get("care_level")):
             return False

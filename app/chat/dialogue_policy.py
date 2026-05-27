@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from app.chat.facets import classify_facet
 from app.plant_detect.schemas import ImagePlantContext
@@ -80,3 +81,31 @@ def should_force_recommendation_from_memory(
     if entities.get("product_name"):
         return False
     return contains_any_phrase(normalized, RECOMMENDATION_REFINEMENT_SIGNALS) or len(normalized.split()) <= 6
+
+
+def enrich_recommendation_refinement_entities(entities: dict[str, Any], memory: dict[str, Any], normalized: str) -> dict[str, Any]:
+    enriched = dict(entities)
+    recommendations = memory.get("last_recommendations") or []
+    if not recommendations:
+        return enriched
+
+    top = recommendations[0]
+    reference_price = parse_price_text(top.get("price"))
+    if contains_any_phrase(normalized, ["re hon", "loai nao re hon"]):
+        enriched["recommendation_refinement"] = "cheaper_than_previous"
+        enriched["reference_price_max"] = reference_price
+        enriched["reference_product_id"] = top.get("product_id")
+    return enriched
+
+
+def parse_price_text(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"(\d+(?:[.,]\d+)?)", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", "."))
+    except ValueError:
+        return None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
-from app.chat.dialogue_policy import apply_contextual_policy
+from app.chat.dialogue_policy import apply_contextual_policy, enrich_recommendation_refinement_entities
 from app.chat.facets import classify_facet
 from app.chat.context_service import ChatContextService
 from app.chat.follow_up import build_follow_up
@@ -48,6 +48,7 @@ class ChatService:
         route = self._augment_route_with_context(route, image_context, memory, message)
         route = apply_contextual_policy(route, message, route.entities, memory, image_context)
         route = self._apply_preference_memory(route, memory)
+        route = self._apply_recommendation_refinement_memory(route, memory, message)
         facet = classify_facet(route.intent, message, route.entities, image_context=image_context, memory=memory)
         route_ms = elapsed_ms(route_started_at)
 
@@ -178,6 +179,12 @@ class ChatService:
                 entities["preference_memory_used"] = True
 
         route.entities = entities
+        return route
+
+    def _apply_recommendation_refinement_memory(self, route: IntentRoute, memory: dict[str, Any], message: str) -> IntentRoute:
+        if route.intent != "recommendation":
+            return route
+        route.entities = enrich_recommendation_refinement_entities(route.entities, memory, normalize_text(message))
         return route
 
     def _handle_cart_order(self, route) -> dict[str, Any]:

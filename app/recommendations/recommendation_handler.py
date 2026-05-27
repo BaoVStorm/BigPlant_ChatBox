@@ -111,6 +111,8 @@ def rank_products(products: list[dict[str, Any]], filters: dict[str, Any]) -> li
             total += 1.3
         if filters.get("max_price") and computed.get("price_min") is not None and float(computed["price_min"]) <= float(filters["max_price"]):
             total += 1.2
+        if filters.get("recommendation_refinement") == "cheaper_than_previous" and computed.get("price_min") is not None:
+            total += max(0.0, 1.5 - float(computed["price_min"]) / 20)
         if product.get("rating_avg"):
             total += min(float(product.get("rating_avg") or 0), 5.0) / 10
         return total
