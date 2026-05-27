@@ -3,6 +3,8 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
+from app.chat.dialogue_policy import apply_contextual_policy
+from app.chat.facets import classify_facet
 from app.chat.context_service import ChatContextService
 from app.chat.follow_up import build_follow_up
 from app.knowledge.rag_handler import PlantCareRagHandler
@@ -44,6 +46,9 @@ class ChatService:
         route_started_at = perf_counter()
         route = self.router.classify(message)
         route = self._augment_route_with_context(route, image_context, memory, message)
+        route = apply_contextual_policy(route, message, route.entities, memory, image_context)
+        route = self._apply_preference_memory(route, memory)
+        facet = classify_facet(route.intent, message, route.entities, image_context=image_context, memory=memory)
         route_ms = elapsed_ms(route_started_at)
 
         handler_started_at = perf_counter()
@@ -67,6 +72,11 @@ class ChatService:
             }
 
         handler_ms = elapsed_ms(handler_started_at)
+        result.setdefault("metadata", {})["facet"] = {
+            "name": facet.name,
+            "confidence": facet.confidence,
+            "source": facet.source,
+        }
         follow_up_message, suggested_questions = build_follow_up(result.get("intent", route.intent), result, memory)
         result["follow_up_message"] = follow_up_message
         result["suggested_questions"] = suggested_questions
@@ -80,7 +90,14 @@ class ChatService:
             "handler": handler_ms,
             "total": elapsed_ms(started_at),
         }
-        self.context_service.persist_turn(resolved_session_id, user_id, message, result, image_context=image_context)
+        self.context_service.persist_turn(
+            resolved_session_id,
+            user_id,
+            message,
+            result,
+            image_context=image_context,
+            route_entities=route.entities,
+        )
         return result
 
     def _resolve_image_context(self, image: ChatImageInput | None) -> ImagePlantContext | None:
@@ -96,6 +113,7 @@ class ChatService:
         message: str,
     ) -> IntentRoute:
         entities = dict(route.entities)
+        preferences = (memory or {}).get("preferences") or {}
 
         if memory and not entities.get("product_name"):
             active_subject = memory.get("active_subject") or {}
@@ -107,6 +125,12 @@ class ChatService:
                 entities["product_name"] = active_subject.get("product_name")
                 entities["context_subject"] = True
                 return IntentRoute(intent="product_info", confidence=0.64, entities=entities, source="session_context_fallback")
+
+        if route.intent == "recommendation":
+            for key in ["max_price", "budget_input_currency", "budget_input_amount", "budget_catalog_currency", "care_level", "watering_need", "light_requirement", "placement", "pet_safe"]:
+                if entities.get(key) is None and preferences.get(key) is not None:
+                    entities[key] = preferences[key]
+                    entities["preference_memory_used"] = True
 
         if not image_context:
             route.entities = entities
@@ -128,6 +152,30 @@ class ChatService:
 
         if route.intent == "general" and image_context.resolved_product_context and should_reinterpret_general_as_image_product_info(message):
             return IntentRoute(intent="product_info", confidence=0.66, entities=entities, source="image_context_fallback")
+
+        route.entities = entities
+        return route
+
+    def _apply_preference_memory(self, route: IntentRoute, memory: dict[str, Any]) -> IntentRoute:
+        if route.intent != "recommendation":
+            return route
+
+        preferences = (memory or {}).get("preferences") or {}
+        entities = dict(route.entities)
+        for key in [
+            "max_price",
+            "budget_input_currency",
+            "budget_input_amount",
+            "budget_catalog_currency",
+            "care_level",
+            "watering_need",
+            "light_requirement",
+            "placement",
+            "pet_safe",
+        ]:
+            if entities.get(key) is None and preferences.get(key) is not None:
+                entities[key] = preferences[key]
+                entities["preference_memory_used"] = True
 
         route.entities = entities
         return route

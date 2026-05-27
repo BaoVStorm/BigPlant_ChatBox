@@ -11,6 +11,8 @@ PRODUCT_QUESTION_FOCUS_SIGNALS = {
     "variant": ["size", "kich thuoc", "mau nao", "loai nao", "mau sac"],
     "image": ["hinh anh", "anh san pham", "xem anh"],
     "price": ["gia", "bao nhieu tien", "bao nhieu"],
+    "highlights": ["dac diem", "noi bat", "dac biet", "uu diem", "cong dung", "mo ta", "la gi"],
+    "overview": ["cay nay sao", "san pham nay sao", "cay nay the nao"],
 }
 
 TOXICITY_NEGATIVE_SIGNALS = [
@@ -38,6 +40,10 @@ def detect_product_question_focus(message: str, entities: dict[str, Any]) -> str
         return "image"
     if contains_any_phrase(normalized, PRODUCT_QUESTION_FOCUS_SIGNALS["price"]):
         return "price"
+    if contains_any_phrase(normalized, PRODUCT_QUESTION_FOCUS_SIGNALS["highlights"]):
+        return "highlights"
+    if contains_any_phrase(normalized, PRODUCT_QUESTION_FOCUS_SIGNALS["overview"]):
+        return "overview"
     return "general"
 
 

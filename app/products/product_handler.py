@@ -84,6 +84,8 @@ def build_product_answer(context: dict[str, Any], message: str, entities: dict[s
 
     if focus == "toxicity":
         return build_toxicity_answer(name, plant)
+    if focus == "highlights":
+        return build_highlights_answer(name, product, plant, computed)
 
     lines = []
     if focus in {"price", "stock", "variant", "image", "general"}:
@@ -107,6 +109,27 @@ def build_product_answer(context: dict[str, Any], message: str, entities: dict[s
         lines.append(f"Lưu ý an toàn: {toxicity_warning or safety_notes}.")
 
     return " ".join(lines)
+
+
+def build_highlights_answer(name: str, product: dict[str, Any], plant: dict[str, Any], computed: dict[str, Any]) -> str:
+    parts = [f"{name} có một vài điểm nổi bật trong dữ liệu hiện tại."]
+
+    short_description = str(product.get("short_description") or "").strip()
+    if short_description:
+        parts.append(short_description)
+
+    plant_description = str(plant.get("description") or "").strip()
+    if plant_description:
+        parts.append(plant_description.split(".")[0].strip() + ".")
+
+    advantages = str(plant.get("advantages") or "").strip()
+    if advantages:
+        parts.append("Ưu điểm nổi bật: " + advantages.split(".")[0].strip() + ".")
+
+    if computed.get("price_text"):
+        parts.append(f"Giá hiện tại đang ở mức {computed.get('price_text')}.")
+
+    return " ".join(part for part in parts if part)
 
 
 def build_toxicity_answer(name: str, plant: dict[str, Any]) -> str:
