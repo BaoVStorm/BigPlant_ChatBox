@@ -8,23 +8,31 @@ from app.router.text_utils import contains_any_phrase, normalize_text
 
 
 CARE_LEVEL_SIGNALS = {
-    "easy": ["de cham", "de song", "nguoi moi", "moi choi", "it cham"],
+    "easy": ["de cham", "de song", "nguoi moi", "moi choi", "it cham", "khong can cham nhieu", "low maintenance"],
+    "moderate": ["cham vua", "trung binh", "co kinh nghiem mot chut"],
+    "hard": ["kho cham", "can cham ky", "cau ky", "nhieu cong cham"],
 }
 
 WATERING_SIGNALS = {
-    "low": ["hay quen tuoi", "quen tuoi", "it tuoi", "khong can tuoi nhieu", "ban ron"],
+    "low": ["hay quen tuoi", "quen tuoi", "it tuoi", "khong can tuoi nhieu", "ban ron", "chiu han", "drought", "it nuoc"],
+    "medium": ["tuoi vua", "tuoi deu", "do am vua"],
+    "high": ["ua am", "can am", "nhieu nuoc", "dat am", "tuoi nhieu", "am uot"],
 }
 
 LIGHT_SIGNALS = {
-    "low": ["it nang", "thieu sang", "it anh sang", "bong ram"],
-    "indirect": ["anh sang gian tiep", "nang gian tiep"],
+    "low": ["it nang", "thieu sang", "it anh sang", "bong ram", "anh sang yeu"],
+    "indirect": ["anh sang gian tiep", "nang gian tiep", "gan cua so", "loc nang"],
+    "bright": ["sang manh", "nhieu sang"],
+    "full_sun": ["nang truc tiep", "full sun", "ngoai troi nang"],
 }
 
 PLACEMENT_SIGNALS = {
-    "desk": ["de ban"],
-    "office": ["van phong", "ban lam viec"],
+    "desk": ["de ban", "ban lam viec", "goc lam viec"],
+    "office": ["van phong", "cong ty"],
     "bedroom": ["phong ngu"],
     "living_room": ["phong khach"],
+    "balcony": ["ban cong", "cua so"],
+    "outdoor": ["ngoai troi", "san vuon", "vuon"],
 }
 
 TOXICITY_PET_SIGNALS = ["mèo", "thú cưng"]
@@ -95,6 +103,16 @@ def extract_entities(text: str, original: str) -> dict[str, Any]:
 
     if mentions_pet(original, text):
         entities["pet_safe"] = True
+        pet_type = detect_pet_type(original, text)
+        if pet_type:
+            entities["pet_type"] = pet_type
+
+    style = detect_style(text)
+    if style:
+        entities["style"] = style
+
+    if contains_any_phrase(text, ["lam qua", "qua tang", "tang sinh nhat", "tang khai truong"]):
+        entities["gift_purpose"] = True
 
     return entities
 
@@ -132,6 +150,29 @@ def mentions_pet(original: str, normalized: str) -> bool:
     if contains_any_phrase(normalized, TOXICITY_PET_NORMALIZED_SIGNALS):
         return True
     return any(re.search(pattern, original_lower) or re.search(pattern, normalized) for pattern in TOXICITY_DOG_PATTERNS)
+
+
+def detect_pet_type(original: str, normalized: str) -> str | None:
+    original_lower = original.lower()
+    if "mèo" in original_lower or "meo" in normalized:
+        return "cat"
+    if "chó" in original_lower or "cho" in normalized:
+        return "dog"
+    if "thu cung" in normalized:
+        return "pet"
+    return None
+
+
+def detect_style(text: str) -> str | None:
+    if contains_any_phrase(text, ["minimal", "toi gian", "hien dai"]):
+        return "minimal"
+    if contains_any_phrase(text, ["sang", "cao cap", "luxury"]):
+        return "elegant"
+    if contains_any_phrase(text, ["chill", "xanh mat", "thu gian"]):
+        return "relaxing"
+    if contains_any_phrase(text, ["decor", "trang tri", "dep"]):
+        return "decorative"
+    return None
 
 
 def extract_budget(text: str) -> dict[str, Any] | None:

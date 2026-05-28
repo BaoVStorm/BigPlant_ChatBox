@@ -46,10 +46,12 @@ class Settings(BaseSettings):
     product_images_collection: str = Field(default="product_images", alias="PRODUCT_IMAGES_COLLECTION")
     variant_inventory_collection: str = Field(default="variant_inventory", alias="VARIANT_INVENTORY_COLLECTION")
     plants_collection: str = Field(default="plants", alias="PLANTS_COLLECTION")
+    plant_profiles_collection: str = Field(default="plant_profiles", alias="PLANT_PROFILES_COLLECTION")
     chat_sessions_collection: str = Field(default="chat_sessions", alias="CHAT_SESSIONS_COLLECTION")
     chat_messages_collection: str = Field(default="chat_messages", alias="CHAT_MESSAGES_COLLECTION")
     knowledge_articles_collection: str = Field(default="plant_knowledge_articles", alias="KNOWLEDGE_ARTICLES_COLLECTION")
     knowledge_chunks_collection: str = Field(default="knowledge_chunks", alias="KNOWLEDGE_CHUNKS_COLLECTION")
+    rag_min_vector_score: float = Field(default=0.72, alias="RAG_MIN_VECTOR_SCORE")
 
     @property
     def resolved_llm_model_path(self) -> Path:

@@ -42,6 +42,10 @@ class ProductRepository:
     def plants(self) -> Collection:
         return self.db[self.settings.plants_collection]
 
+    @property
+    def profiles(self) -> Collection:
+        return self.db[self.settings.plant_profiles_collection]
+
     def get_product_by_name(self, name: str) -> dict[str, Any] | None:
         name = name.strip()
         if not name:
@@ -130,6 +134,7 @@ class ProductRepository:
         category = self._get_raw_by_id(self.categories, product.get("category_id"))
         plant = self._get_raw_by_id(self.plants, product.get("plant_id"))
         images = self._get_raw_images(product_id, [variant.get("_id") for variant in variants])
+        profile = self._get_raw_profile(product.get("plant_id"), product_id)
         computed = compute_product_values(variants_with_inventory, images)
 
         context = {
@@ -143,6 +148,7 @@ class ProductRepository:
             "product": serialize_mongo(product),
             "category": serialize_mongo(category) if category else None,
             "plant": serialize_mongo(plant) if plant else None,
+            "plant_profile": serialize_mongo(profile) if profile else None,
             "variants": serialize_mongo(variants_with_inventory),
             "images": serialize_mongo(images),
             "computed": computed,
@@ -161,7 +167,7 @@ class ProductRepository:
 
     def search_products(self, filters: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
         query = self._plant_product_query(build_product_filter(filters))
-        cursor = self.products.find(query).limit(max(limit * 8, 40))
+        cursor = self.products.find(query).limit(max(limit * 20, 200))
         contexts: list[dict[str, Any]] = []
         for product in cursor:
             context = self.get_product_full_context(product)
@@ -263,6 +269,19 @@ class ProductRepository:
             return None
         return collection.find_one({"_id": {"$in": object_id_or_string_values(value)}})
 
+    def _get_raw_profile(self, plant_id: Any, product_id: Any) -> dict[str, Any] | None:
+        query = {"$or": []}
+        plant_values = object_id_or_string_values(plant_id)
+        if plant_values:
+            query["$or"].append({"plant_id": {"$in": plant_values}})
+        product_values = object_id_or_string_values(product_id)
+        if product_values:
+            query["$or"].append({"primary_product_id": {"$in": product_values}})
+            query["$or"].append({"product_ids": {"$in": product_values}})
+        if not query["$or"]:
+            return None
+        return self.profiles.find_one(query)
+
     def _plant_product_query(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         clauses = [{"is_active": {"$ne": False}}, self._plant_constraint()]
         if extra:
@@ -336,15 +355,15 @@ def object_id_or_string_values(value: Any) -> list[Any]:
 def build_product_filter(filters: dict[str, Any]) -> dict[str, Any]:
     query: dict[str, Any] = {}
     if filters.get("care_level"):
-        query["care_level"] = {"$regex": f"^{re.escape(str(filters['care_level']))}$", "$options": "i"}
+        care_levels = sorted(care_level_aliases(filters["care_level"]))
+        if care_levels:
+            pattern = "^(" + "|".join(re.escape(value) for value in care_levels) + ")$"
+            query["care_level"] = {"$regex": pattern, "$options": "i"}
     return query
 
 
 def build_vector_filter(filters: dict[str, Any]) -> dict[str, Any]:
-    vector_filter: dict[str, Any] = {}
-    if filters.get("care_level"):
-        vector_filter["care_level"] = {"$regex": f"^{re.escape(str(filters['care_level']))}$", "$options": "i"}
-    return vector_filter
+    return {}
 
 
 def attach_inventory(variants: list[dict[str, Any]], inventories: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -386,6 +405,9 @@ def compute_product_values(variants: list[dict[str, Any]], images: list[dict[str
 def context_matches_filters(context: dict[str, Any], filters: dict[str, Any]) -> bool:
     computed = context.get("computed") or {}
     product = context.get("product") or {}
+    profile = context.get("plant_profile") or {}
+    care_profile = profile.get("care_profile") or {}
+    safety_profile = profile.get("safety_profile") or {}
     product_id = str(product.get("_id") or "")
     if filters.get("max_price"):
         price_min = computed.get("price_min")
@@ -397,12 +419,71 @@ def context_matches_filters(context: dict[str, Any], filters: dict[str, Any]) ->
             return False
     if filters.get("reference_product_id") and product_id == str(filters["reference_product_id"]):
         return False
-    if filters.get("care_level") and product.get("care_level") != filters["care_level"]:
-        if normalize_text(product.get("care_level")) != normalize_text(filters.get("care_level")):
-            return False
+    if filters.get("care_level") and not care_level_matches(product.get("care_level") or care_profile.get("care_level"), filters.get("care_level")):
+        return False
+    if filters.get("watering_need") and not profile_value_matches(care_profile.get("watering_need"), filters.get("watering_need")):
+        return False
+    if filters.get("light_requirement") and not light_matches(care_profile.get("light_requirement"), filters.get("light_requirement")):
+        return False
+    if filters.get("placement") and not placement_matches(care_profile.get("placement_tags"), filters.get("placement")):
+        return False
+    if filters.get("pet_safe") is True and safety_profile.get("pet_safe") is not True:
+        return False
     if filters.get("in_stock") is True and not computed.get("in_stock"):
         return False
     return True
+
+
+def care_level_matches(actual: Any, expected: Any) -> bool:
+    actual_text = normalize_text(actual)
+    return bool(actual_text and actual_text in care_level_aliases(expected))
+
+
+def care_level_aliases(expected: Any) -> set[str]:
+    expected_text = normalize_text(expected)
+    if expected_text in {"easy", "de", "de cham", "low", "low maintenance"}:
+        return {"easy", "low", "moderate"}
+    if expected_text in {"moderate", "medium", "trung binh"}:
+        return {"moderate", "medium", "easy", "low"}
+    if expected_text in {"hard", "difficult", "advanced", "kho", "kho cham"}:
+        return {"hard", "difficult", "advanced"}
+    return {expected_text} if expected_text else set()
+
+
+def profile_value_matches(actual: Any, expected: Any) -> bool:
+    if actual is None or expected is None:
+        return False
+    return normalize_text(actual) == normalize_text(expected)
+
+
+def light_matches(actual: Any, expected: Any) -> bool:
+    actual_text = normalize_text(actual)
+    expected_text = normalize_text(expected)
+    if not actual_text or actual_text == "unknown":
+        return False
+    if expected_text in {"low", "it nang", "thieu sang"}:
+        return actual_text in {"low_to_indirect", "low", "partial_shade"}
+    if expected_text in {"indirect", "gian tiep"}:
+        return actual_text in {"low_to_indirect", "bright_indirect", "partial_shade"}
+    if expected_text in {"bright", "full_sun", "sun"}:
+        return actual_text in {"bright_indirect", "full_sun", "bright_outdoor"}
+    return actual_text == expected_text
+
+
+def placement_matches(actual: Any, expected: Any) -> bool:
+    if not isinstance(actual, list):
+        return False
+    normalized_tags = {normalize_text(item) for item in actual}
+    expected_text = normalize_text(expected)
+    aliases = {
+        "desk": {"desk", "office", "living_room"},
+        "office": {"office", "desk", "living_room"},
+        "bedroom": {"bedroom", "living_room", "office"},
+        "living_room": {"living_room", "office", "balcony"},
+        "balcony": {"balcony", "outdoor_garden"},
+        "outdoor": {"outdoor_garden", "balcony", "water_edge"},
+    }
+    return bool(normalized_tags & aliases.get(expected_text, {expected_text}))
 
 
 def to_float(value: Any) -> float | None:
