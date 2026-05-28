@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=768, alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.2, alias="LLM_TEMPERATURE")
     llm_prompt_format: str = Field(default="auto", alias="LLM_PROMPT_FORMAT")
+    llm_use_for_product_info: bool = Field(default=False, alias="LLM_USE_FOR_PRODUCT_INFO")
+    llm_use_for_recommendation: bool = Field(default=False, alias="LLM_USE_FOR_RECOMMENDATION")
+    llm_use_for_rag: bool = Field(default=False, alias="LLM_USE_FOR_RAG")
 
     catalog_price_currency: str = Field(default="USD", alias="CATALOG_PRICE_CURRENCY")
     vnd_per_usd: float = Field(default=25000.0, alias="VND_PER_USD")

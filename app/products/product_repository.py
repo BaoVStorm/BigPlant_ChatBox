@@ -123,39 +123,83 @@ class ProductRepository:
         return None
 
     def get_product_full_context(self, product_or_id: dict[str, Any] | str) -> dict[str, Any] | None:
-        product = self._get_raw_product(product_or_id)
-        if not product:
-            return None
+        contexts = self.get_products_full_contexts([product_or_id], limit=1)
+        return contexts[0] if contexts else None
 
-        product_id = product.get("_id")
-        variants = self._get_raw_variants(product_id)
-        inventories = self._get_raw_inventories([variant.get("_id") for variant in variants])
-        variants_with_inventory = attach_inventory(variants, inventories)
-        category = self._get_raw_by_id(self.categories, product.get("category_id"))
-        plant = self._get_raw_by_id(self.plants, product.get("plant_id"))
-        images = self._get_raw_images(product_id, [variant.get("_id") for variant in variants])
-        profile = self._get_raw_profile(product.get("plant_id"), product_id)
-        computed = compute_product_values(variants_with_inventory, images)
+    def get_products_full_contexts(self, products_or_ids: list[dict[str, Any] | str], limit: int | None = None) -> list[dict[str, Any]]:
+        products = self._get_raw_products(products_or_ids)
+        if limit is not None:
+            products = products[:limit]
+        if not products:
+            return []
 
-        context = {
-            "_id": str(product_id),
-            "name": product.get("name"),
-            "slug": product.get("slug"),
-            "sku": product.get("sku"),
-            "care_level": product.get("care_level"),
-            "rating_avg": product.get("rating_avg"),
-            "rating_count": product.get("rating_count"),
-            "product": serialize_mongo(product),
-            "category": serialize_mongo(category) if category else None,
-            "plant": serialize_mongo(plant) if plant else None,
-            "plant_profile": serialize_mongo(profile) if profile else None,
-            "variants": serialize_mongo(variants_with_inventory),
-            "images": serialize_mongo(images),
-            "computed": computed,
-        }
-        if isinstance(product_or_id, dict) and product_or_id.get("vector_score") is not None:
-            context["vector_score"] = product_or_id["vector_score"]
-        return context
+        product_ids = [product.get("_id") for product in products if product.get("_id") is not None]
+        product_values = expanded_object_values(product_ids)
+        category_values = expanded_object_values(product.get("category_id") for product in products if product.get("category_id") is not None)
+        plant_values = expanded_object_values(product.get("plant_id") for product in products if product.get("plant_id") is not None)
+
+        variants = list(self.variants.find({"product_id": {"$in": product_values}, "is_active": {"$ne": False}}).sort([("is_default", -1), ("price", 1)]))
+        variants_by_product = group_by_field(variants, "product_id")
+        variant_ids = [variant.get("_id") for variant in variants if variant.get("_id") is not None]
+        variant_values = expanded_object_values(variant_ids)
+        variant_to_product_id = {str(variant.get("_id")): str(variant.get("product_id")) for variant in variants if variant.get("_id") is not None}
+
+        inventories = list(self.inventory.find({"variant_id": {"$in": variant_values}})) if variant_values else []
+        inventory_by_variant_id = {str(inventory.get("variant_id")): inventory for inventory in inventories}
+
+        categories = list(self.categories.find({"_id": {"$in": category_values}})) if category_values else []
+        category_by_id = first_by_id(categories)
+
+        plants = list(self.plants.find({"_id": {"$in": plant_values}})) if plant_values else []
+        plant_by_id = first_by_id(plants)
+
+        profiles = self._get_raw_profiles_for_batch(plant_values, product_values)
+        profile_by_plant_id, profile_by_product_id = index_profiles(profiles)
+
+        image_query: dict[str, Any] = {"$or": [{"product_id": {"$in": product_values}}]}
+        if variant_values:
+            image_query["$or"].append({"variant_id": {"$in": variant_values}})
+        images = list(self.images.find(image_query).sort([("is_primary", -1), ("sort_order", 1)]).limit(max(len(products) * 12, 12)))
+        images_by_product: dict[str, list[dict[str, Any]]] = {}
+        for image in images:
+            product_key = str(image.get("product_id") or "")
+            if not product_key and image.get("variant_id") is not None:
+                product_key = variant_to_product_id.get(str(image.get("variant_id")), "")
+            if product_key:
+                images_by_product.setdefault(product_key, []).append(image)
+
+        contexts: list[dict[str, Any]] = []
+        for product in products:
+            product_id = product.get("_id")
+            product_key = str(product_id)
+            product_variants = variants_by_product.get(product_key, [])
+            variants_with_inventory = attach_inventory_from_map(product_variants, inventory_by_variant_id)
+            product_images = images_by_product.get(product_key, [])[:12]
+            category = category_by_id.get(str(product.get("category_id")))
+            plant = plant_by_id.get(str(product.get("plant_id")))
+            profile = profile_by_plant_id.get(str(product.get("plant_id"))) or profile_by_product_id.get(product_key)
+            computed = compute_product_values(variants_with_inventory, product_images)
+
+            context = {
+                "_id": str(product_id),
+                "name": product.get("name"),
+                "slug": product.get("slug"),
+                "sku": product.get("sku"),
+                "care_level": product.get("care_level"),
+                "rating_avg": product.get("rating_avg"),
+                "rating_count": product.get("rating_count"),
+                "product": serialize_mongo(product),
+                "category": serialize_mongo(category) if category else None,
+                "plant": serialize_mongo(plant) if plant else None,
+                "plant_profile": serialize_mongo(profile) if profile else None,
+                "variants": serialize_mongo(variants_with_inventory),
+                "images": serialize_mongo(product_images),
+                "computed": computed,
+            }
+            if product.get("vector_score") is not None:
+                context["vector_score"] = product["vector_score"]
+            contexts.append(context)
+        return contexts
 
     def get_product_variants(self, product_id: str) -> list[dict[str, Any]]:
         variants = self._get_raw_variants(product_id)
@@ -167,11 +211,10 @@ class ProductRepository:
 
     def search_products(self, filters: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
         query = self._plant_product_query(build_product_filter(filters))
-        cursor = self.products.find(query).limit(max(limit * 20, 200))
+        products = list(self.products.find(query).limit(max(limit * 20, 200)))
         contexts: list[dict[str, Any]] = []
-        for product in cursor:
-            context = self.get_product_full_context(product)
-            if context and context_matches_filters(context, filters):
+        for context in self.get_products_full_contexts(products):
+            if context_matches_filters(context, filters):
                 contexts.append(context)
             if len(contexts) >= limit:
                 break
@@ -180,23 +223,14 @@ class ProductRepository:
     def get_products_by_ids(self, product_ids: list[str], limit: int = 10) -> list[dict[str, Any]]:
         if not product_ids:
             return []
-        ids: list[Any] = []
-        for product_id in product_ids:
-            ids.extend(object_id_or_string_values(product_id))
+        ids = expanded_object_values(product_ids)
         docs = list(self.products.find(self._plant_product_query({"_id": {"$in": ids}})).limit(limit))
         order = {str(product_id): index for index, product_id in enumerate(product_ids)}
         docs.sort(key=lambda doc: order.get(str(doc.get("_id")), 9999))
-        return [context for doc in docs if (context := self.get_product_full_context(doc))]
+        return self.get_products_full_contexts(docs, limit=limit)
 
     def hydrate_product_contexts(self, products: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
-        contexts: list[dict[str, Any]] = []
-        for product in products:
-            context = self.get_product_full_context(product)
-            if context:
-                contexts.append(context)
-            if len(contexts) >= limit:
-                break
-        return contexts
+        return self.get_products_full_contexts(products[:limit], limit=limit)
 
     def vector_search_products(
         self,
@@ -231,16 +265,46 @@ class ProductRepository:
         )
 
     def _get_raw_product(self, product_or_id: dict[str, Any] | str) -> dict[str, Any] | None:
-        if isinstance(product_or_id, dict):
-            product_id = product_or_id.get("_id")
-            if product_id:
-                raw = self.products.find_one({"_id": {"$in": object_id_or_string_values(product_id)}})
+        products = self._get_raw_products([product_or_id])
+        return products[0] if products else None
+
+    def _get_raw_products(self, products_or_ids: list[dict[str, Any] | str]) -> list[dict[str, Any]]:
+        raw_by_id: dict[str, dict[str, Any]] = {}
+        requested: list[dict[str, Any] | str] = []
+        ids_to_fetch: list[Any] = []
+
+        for item in products_or_ids:
+            requested.append(item)
+            if isinstance(item, dict):
+                product_id = item.get("_id")
+                if product_id is None:
+                    continue
+                if item.get("name") and item.get("plant_id") is not None:
+                    raw_by_id[str(product_id)] = dict(item)
+                else:
+                    ids_to_fetch.append(product_id)
+            else:
+                ids_to_fetch.append(item)
+
+        if ids_to_fetch:
+            for raw in self.products.find({"_id": {"$in": expanded_object_values(ids_to_fetch)}}):
+                raw_by_id[str(raw.get("_id"))] = raw
+
+        result: list[dict[str, Any]] = []
+        for item in requested:
+            if isinstance(item, dict):
+                product_id = item.get("_id")
+                raw = raw_by_id.get(str(product_id)) if product_id is not None else item
                 if raw:
-                    if product_or_id.get("vector_score") is not None:
-                        raw["vector_score"] = product_or_id["vector_score"]
-                    return raw
-            return product_or_id
-        return self.products.find_one({"_id": {"$in": object_id_or_string_values(product_or_id)}})
+                    raw = dict(raw)
+                    if item.get("vector_score") is not None:
+                        raw["vector_score"] = item["vector_score"]
+                    result.append(raw)
+            else:
+                raw = raw_by_id.get(str(item))
+                if raw:
+                    result.append(raw)
+        return result
 
     def _get_raw_variants(self, product_id: Any) -> list[dict[str, Any]]:
         query = {"product_id": {"$in": object_id_or_string_values(product_id)}, "is_active": {"$ne": False}}
@@ -270,17 +334,19 @@ class ProductRepository:
         return collection.find_one({"_id": {"$in": object_id_or_string_values(value)}})
 
     def _get_raw_profile(self, plant_id: Any, product_id: Any) -> dict[str, Any] | None:
-        query = {"$or": []}
-        plant_values = object_id_or_string_values(plant_id)
+        profiles = self._get_raw_profiles_for_batch(object_id_or_string_values(plant_id), object_id_or_string_values(product_id))
+        return profiles[0] if profiles else None
+
+    def _get_raw_profiles_for_batch(self, plant_values: list[Any], product_values: list[Any]) -> list[dict[str, Any]]:
+        clauses = []
         if plant_values:
-            query["$or"].append({"plant_id": {"$in": plant_values}})
-        product_values = object_id_or_string_values(product_id)
+            clauses.append({"plant_id": {"$in": plant_values}})
         if product_values:
-            query["$or"].append({"primary_product_id": {"$in": product_values}})
-            query["$or"].append({"product_ids": {"$in": product_values}})
-        if not query["$or"]:
-            return None
-        return self.profiles.find_one(query)
+            clauses.append({"primary_product_id": {"$in": product_values}})
+            clauses.append({"product_ids": {"$in": product_values}})
+        if not clauses:
+            return []
+        return list(self.profiles.find({"$or": clauses}))
 
     def _plant_product_query(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         clauses = [{"is_active": {"$ne": False}}, self._plant_constraint()]
@@ -352,6 +418,51 @@ def object_id_or_string_values(value: Any) -> list[Any]:
     return values
 
 
+def expanded_object_values(values: Any) -> list[Any]:
+    expanded: list[Any] = []
+    for value in values or []:
+        expanded.extend(object_id_or_string_values(value))
+    return dedupe_values(expanded)
+
+
+def dedupe_values(values: list[Any]) -> list[Any]:
+    result = []
+    seen = set()
+    for value in values:
+        marker = (type(value).__name__, str(value))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        result.append(value)
+    return result
+
+
+def group_by_field(docs: list[dict[str, Any]], field: str) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for doc in docs:
+        value = doc.get(field)
+        if value is not None:
+            grouped.setdefault(str(value), []).append(doc)
+    return grouped
+
+
+def first_by_id(docs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(doc.get("_id")): doc for doc in docs if doc.get("_id") is not None}
+
+
+def index_profiles(profiles: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    by_plant_id: dict[str, dict[str, Any]] = {}
+    by_product_id: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        if profile.get("plant_id") is not None:
+            by_plant_id[str(profile.get("plant_id"))] = profile
+        if profile.get("primary_product_id") is not None:
+            by_product_id[str(profile.get("primary_product_id"))] = profile
+        for product_id in profile.get("product_ids") or []:
+            by_product_id[str(product_id)] = profile
+    return by_plant_id, by_product_id
+
+
 def build_product_filter(filters: dict[str, Any]) -> dict[str, Any]:
     query: dict[str, Any] = {}
     if filters.get("care_level"):
@@ -368,6 +479,10 @@ def build_vector_filter(filters: dict[str, Any]) -> dict[str, Any]:
 
 def attach_inventory(variants: list[dict[str, Any]], inventories: list[dict[str, Any]]) -> list[dict[str, Any]]:
     inventory_by_variant_id = {str(inventory.get("variant_id")): inventory for inventory in inventories}
+    return attach_inventory_from_map(variants, inventory_by_variant_id)
+
+
+def attach_inventory_from_map(variants: list[dict[str, Any]], inventory_by_variant_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     result = []
     for variant in variants:
         item = dict(variant)

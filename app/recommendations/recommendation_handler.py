@@ -156,7 +156,8 @@ def compose_recommendation_answer(
     filters: dict[str, Any],
     fallback_answer: str,
 ) -> tuple[str, bool]:
-    if not llm.is_available:
+    llm_enabled = getattr(getattr(llm, "settings", None), "llm_use_for_recommendation", False)
+    if not llm_enabled or not llm.is_available:
         return fallback_answer, False
     try:
         prompt = RECOMMENDATION_PROMPT.format(

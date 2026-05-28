@@ -57,7 +57,8 @@ class PlantCareRagHandler:
 
         answer = None
         llm_used = False
-        if self.llm.is_available:
+        llm_enabled = getattr(getattr(self.llm, "settings", None), "llm_use_for_rag", False)
+        if llm_enabled and self.llm.is_available:
             try:
                 answer = self.llm.generate(prompt)
                 llm_used = True

@@ -49,6 +49,7 @@ class ChatService:
         route = self.router.classify(message)
         route = self._augment_route_with_context(route, image_context, memory, message)
         route = apply_contextual_policy(route, message, route.entities, memory, image_context)
+        route = self._apply_care_question_override(route, message)
         route = self._apply_preference_memory(route, memory)
         route = self._apply_recommendation_refinement_memory(route, memory, message)
         facet = classify_facet(route.intent, message, route.entities, image_context=image_context, memory=memory)
@@ -161,6 +162,11 @@ class ChatService:
         route.entities = entities
         return route
 
+    def _apply_care_question_override(self, route: IntentRoute, message: str) -> IntentRoute:
+        if route.intent != "product_info" or not should_reinterpret_product_info_as_plant_care(message):
+            return route
+        return IntentRoute(intent="plant_care", confidence=max(route.confidence, 0.76), entities=dict(route.entities), source="care_question_override")
+
     def _apply_preference_memory(self, route: IntentRoute, memory: dict[str, Any]) -> IntentRoute:
         if route.intent != "recommendation":
             return route
@@ -235,6 +241,13 @@ def should_use_deterministic_general(message: str) -> bool:
     normalized = normalize_text(message)
     greeting_markers = ["xin chao", "hello", "hi", "alo", "cam on"]
     return any(marker in normalized for marker in greeting_markers) and len(normalized.split()) <= 8
+
+
+def should_reinterpret_product_info_as_plant_care(message: str) -> bool:
+    normalized = normalize_text(message)
+    care_markers = ["cach tuoi", "tuoi", "cham soc", "vang la", "ung nuoc", "thoi re", "sau benh", "bi benh", "anh sang", "thieu sang", "it nang"]
+    product_markers = ["gia", "bao nhieu", "con hang", "het hang", "ton kho", "size", "kich thuoc", "mua", "dat hang", "hinh anh", "xem anh"]
+    return any(marker in normalized for marker in care_markers) and not any(marker in normalized for marker in product_markers)
 
 
 def should_reinterpret_general_as_image_product_info(message: str) -> bool:

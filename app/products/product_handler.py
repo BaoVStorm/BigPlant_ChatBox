@@ -77,7 +77,8 @@ class ProductInfoHandler:
         }
 
     def _compose_answer(self, message: str, context: dict[str, Any], fallback_answer: str, focus: str) -> tuple[str, bool]:
-        if not self.llm.is_available or focus in {"price", "stock", "variant", "image"}:
+        llm_enabled = getattr(getattr(self.llm, "settings", None), "llm_use_for_product_info", False)
+        if not llm_enabled or not self.llm.is_available or focus in {"price", "stock", "variant", "image"}:
             return fallback_answer, False
         try:
             prompt = PRODUCT_INFO_PROMPT.format(
