@@ -483,7 +483,7 @@ def link_status(product: dict[str, Any] | None, plant: dict[str, Any] | None, pr
     if not product:
         return {"status": "unknown", "confidence": 0.0}
 
-    expected = normalize_search(product_scientific_name(product, []))
+    expected = normalize_search(product_scientific_name(product, []) or product.get("name"))
     actual = normalize_search((plant or {}).get("scientific_name"))
     product_plant_actual = normalize_search((product_plant_id_doc or {}).get("scientific_name"))
     current_plant_id = product.get("plant_id")
