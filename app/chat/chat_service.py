@@ -3,6 +3,7 @@ from __future__ import annotations
 from time import perf_counter
 from typing import Any
 
+from app.agent.planner import AgentPlanner
 from app.chat.dialogue_policy import apply_contextual_policy, enrich_recommendation_refinement_entities
 from app.chat.facets import classify_facet
 from app.chat.context_service import ChatContextService
@@ -23,6 +24,7 @@ class ChatService:
     def __init__(self) -> None:
         self.llm = LocalLLM()
         self.router = IntentRouter(self.llm)
+        self.agent_planner = AgentPlanner()
         self.product_repository = ProductRepository()
         self.context_service = ChatContextService()
         self.plant_detect_service = PlantDetectService(repository=self.product_repository)
@@ -50,6 +52,7 @@ class ChatService:
         route = self._apply_preference_memory(route, memory)
         route = self._apply_recommendation_refinement_memory(route, memory, message)
         facet = classify_facet(route.intent, message, route.entities, image_context=image_context, memory=memory)
+        agent_plan = self.agent_planner.plan(message, route, facet, memory=memory, image_context=image_context)
         route_ms = elapsed_ms(route_started_at)
 
         handler_started_at = perf_counter()
@@ -78,6 +81,7 @@ class ChatService:
             "confidence": facet.confidence,
             "source": facet.source,
         }
+        result["metadata"]["agent_plan"] = agent_plan.model_dump()
         follow_up_message, suggested_questions = build_follow_up(result.get("intent", route.intent), result, memory)
         result["follow_up_message"] = follow_up_message
         result["suggested_questions"] = suggested_questions

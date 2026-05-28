@@ -20,7 +20,9 @@
     "start": "node scripts/node/run-api.mjs",
     "compile": "node scripts/node/run-python.mjs -m compileall app scripts",
     "ingest:products": "node scripts/node/run-python.mjs scripts/ingest_products.py",
-    "ingest:knowledge": "node scripts/node/run-python.mjs scripts/ingest_knowledge.py"
+    "ingest:knowledge": "node scripts/node/run-python.mjs scripts/ingest_knowledge.py",
+    "eval:ai": "node scripts/node/run-python.mjs scripts/evaluate_ai_agent.py",
+    "eval:ai:quick": "node scripts/node/run-python.mjs scripts/evaluate_ai_agent.py --skip-vector"
   },
   "engines": {
     "node": ">=20"
