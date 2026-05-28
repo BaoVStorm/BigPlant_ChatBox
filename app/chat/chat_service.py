@@ -163,7 +163,7 @@ class ChatService:
         return route
 
     def _apply_care_question_override(self, route: IntentRoute, message: str) -> IntentRoute:
-        if route.intent != "product_info" or not should_reinterpret_product_info_as_plant_care(message):
+        if route.intent not in {"product_info", "recommendation", "general", "unclear"} or not should_reinterpret_product_info_as_plant_care(message):
             return route
         return IntentRoute(intent="plant_care", confidence=max(route.confidence, 0.76), entities=dict(route.entities), source="care_question_override")
 
