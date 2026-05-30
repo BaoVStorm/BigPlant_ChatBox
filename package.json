@@ -20,7 +20,7 @@
     "models:download:all": "npm run model:download:gwen && npm run model:download:llama && npm run model:download:vinallama && npm run embedding:download",
 
     "dev": "node scripts/node/run-api.mjs --reload",
-    "start": "node scripts/node/run-api.mjs",
+    "start": "bash -lc 'set -a; source .env; set +a; node scripts/node/run-api.mjs & API_PID=$!; trap \"kill $API_PID\" EXIT; sleep 3; ssh -N -R 0.0.0.0:3015:localhost:3015 \"$SSH_REMOTE_HOST\"'",  
     "compile": "node scripts/node/run-python.mjs -m compileall app scripts",
 
     "ingest:products": "node scripts/node/run-python.mjs scripts/ingest_products.py",

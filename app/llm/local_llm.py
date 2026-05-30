@@ -7,6 +7,7 @@ from typing import Any
 
 from app.config import Settings, get_settings
 
+from llama_cpp import Llama
 
 class LocalLLM:
     _shared_models: dict[str, Any] = {}
@@ -36,8 +37,6 @@ class LocalLLM:
             if model_key in self._shared_models:
                 return self._shared_models[model_key]
             try:
-                from llama_cpp import Llama
-
                 model = Llama(
                     model_path=model_key,
                     n_ctx=self.settings.llm_context_size,
